@@ -265,7 +265,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
         food.feed.push({ ...entry, kind: 'comment', text: text(fields.text, 1200) });
       } else if (action === 'food-reply') {
         const parent = food.feed.find(entry => entry.id === fields.entry);
-        check(parent);
+        check(parent && !parent.replyOnly);
         parent.replies.push({ ...entry, text: text(fields.text, 1200) });
       } else {
         const item = food.items.find(item => item.id === fields.item);
@@ -638,7 +638,7 @@ function startPreview(data) {
     const person = recipient();
     const title = node('h1', 'recipient-title', node('span', 'task', 'Robisz prezent dla:'), node('span', 'recipient-name', person.name));
     const section = node('section', 'section-gap', node('h2', 'list-heading', 'Lista pomysłów'),
-      cards(person, false, 'Nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.'));
+      cards(person, false, `${person.name} nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.`));
     const choice = node('section', 'choice-panel section-gap');
     choice.id = 'choice';
     const change = (action, label, message, style) => button(label, event => {
@@ -733,7 +733,7 @@ function startPreview(data) {
     const head = entry => node('div', 'feed-head', node('strong', '', entry.authorName || 'Organizator'), when(entry.createdAt));
     const eventCopy = {
       added: ['dodaje:', ''], claimed: ['bierze:', ''], released: ['rezygnuje z:', ' (wolne)'],
-      'organizer-provided': ['przejmuje:', ' (zapewnia organizator)'], opened: ['udostępnia do wzięcia:', ''], removed: ['usuwa:', ''],
+      removed: ['usuwa:', ''],
     };
     const entries = oldest ? food.feed : food.feed.toReversed();
     feed.append(composer('composer mt-sm', 'comment-text', 'Dodaj komentarz', 'Komentarz…', 'composer-btn',
@@ -746,7 +746,7 @@ function startPreview(data) {
           const header = head(reply);
           return mark(node('div', 'feed-reply', header, node('p', 'multiline', reply.text)), reply.id, header.firstElementChild);
         })) : null;
-      const replyBox = node('details', 'reply-box', node('summary', 'reply-toggle', node('span', '', 'Odpowiedz')),
+      const replyBox = entry.replyOnly ? null : node('details', 'reply-box', node('summary', 'reply-toggle', node('span', '', 'Odpowiedz')),
         composer('reply-form', 'reply-' + entry.id, 'Odpowiedź', 'Odpowiedź…', 'secondary composer-btn',
           values => apply('food-reply', { ...values, entry: entry.id }, 'Dodano odpowiedź.', article.id, { afterReplies: true }), true));
       if (copy) {
@@ -758,7 +758,9 @@ function startPreview(data) {
         return mark(article, entry.id, line.firstElementChild);
       } else {
         const header = head(entry);
-        article.append(header, node('p', 'multiline feed-body', entry.text), replies, replyBox);
+        article.append(header, node('p', 'multiline feed-body', entry.text));
+        if (replies) article.append(replies);
+        if (replyBox) article.append(replyBox);
         return mark(article, entry.id, header.firstElementChild);
       }
     })));
