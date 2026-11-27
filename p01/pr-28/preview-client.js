@@ -311,7 +311,7 @@ function startPreview(data) {
         const href = data.recipientList;
         if (!href) return;
         const view = node('a', 'btn secondary mt-sm', 'Zobacz, co widzi odbiorca');
-        view.href = href + '#received-suggestions';
+        view.href = href + '#received-suggestion-' + recipient().suggestions.at(-1).id;
         result.after(view);
       } : null);
   }
@@ -373,6 +373,8 @@ function startPreview(data) {
         card.append(node('strong', 'suggestion-status ' + entry.status, label));
         if (entry.comment) card.append(node('p', 'response-comment multiline', entry.comment));
       } else {
+        card.id = 'received-suggestion-' + entry.id;
+        card.tabIndex = -1;
         card.append(node('div', 'action-row', ...['accepted', 'rejected'].map(decision => {
           const accept = decision === 'accepted';
           const label = accept ? 'Podoba mi się' : 'Nie, dziękuję';
@@ -516,7 +518,11 @@ function startPreview(data) {
     }
   });
   render();
-  if (location.hash === '#received-suggestions') document.getElementById('received-suggestions')?.scrollIntoView();
+  if (location.hash.startsWith('#received-suggestion-')) {
+    const target = document.getElementById(location.hash.slice(1));
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'start' });
+  }
 }
 
 if (typeof document !== 'undefined') {
