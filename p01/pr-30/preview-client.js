@@ -279,13 +279,12 @@ function startPreview(data) {
     result.scrollIntoView({ block: 'nearest' });
     return result;
   };
-  function openForm(title, fields, label, action, fixed, message, target, intro, extra, after) {
-    const addTrigger = action === 'add' && screen.contains(document.activeElement) ? document.activeElement : null;
+  function openForm(title, fields, label, action, fixed, message, target, intro, extra, after, returnFocus) {
     const back = button('Wróć', () => {
       currentForm.remove();
       currentForm = undefined;
       screen.hidden = false;
-      (addTrigger ?? screen.querySelector('button'))?.focus();
+      (returnFocus ?? screen.querySelector('button'))?.focus();
     }, 'quiet');
     const heading = node('h1', '', title);
     heading.tabIndex = -1;
@@ -298,7 +297,7 @@ function startPreview(data) {
     heading.focus();
     heading.scrollIntoView({ block: 'start' });
   }
-  function ideaForm(action, item = {}) {
+  function ideaForm(action, item = {}, returnFocus) {
     const suggestion = action === 'suggest', edit = action === 'edit';
     const title = suggestion ? 'Zaproponuj pomysł' : edit ? 'Edytuj pomysł' : 'Dodaj pomysł';
     const fields = [
@@ -317,7 +316,7 @@ function startPreview(data) {
         const view = node('a', 'btn secondary mt-sm', 'Zobacz, co widzi odbiorca');
         view.href = href + '#received-suggestion-' + recipient().suggestions.at(-1).id;
         result.after(view);
-      } : null);
+      } : null, returnFocus);
   }
   function discuss(action, item, thread) {
     const question = action === 'question', reply = action === 'reply';
@@ -419,7 +418,7 @@ function startPreview(data) {
     return [title, intro, stateNote && node('p', 'notice mt', stateNote),
       open && person.items.length < 2 && node('p', 'mt-sm', 'Dodaj 2 lub 3 pomysły, wtedy trudniej zgadnąć, co dostaniesz.'),
       cards(person, true, 'Twoja lista jest pusta.'), open && pending(person).length && suggestions(person, true),
-      open && optionPanel, open && node('div', 'mt', button('Dodaj pomysł', () => ideaForm('add')))];
+      open && optionPanel, open && node('div', 'mt', button('Dodaj pomysł', event => ideaForm('add', {}, event.currentTarget)))];
   }
   function draw() {
     const person = recipient();
