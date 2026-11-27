@@ -1,0 +1,525 @@
+const storagePrefix = 'upominki-preview:';
+const warsawDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short' });
+const warsawDateTime = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short', timeStyle: 'short' });
+
+export function previewStore(storage, scope, initial) {
+  const key = storagePrefix + scope;
+  return {
+    read: () => JSON.parse(storage.getItem(key) ?? 'null') ?? structuredClone(initial),
+    write: state => storage.setItem(key, JSON.stringify(state)),
+    reset: () => storage.removeItem(key),
+  };
+}
+
+const check = (condition, message = 'Ta czynność nie jest teraz dostępna.') => {
+  if (!condition) throw new Error(message);
+};
+const value = (field, limit) => String(field ?? '').trim().slice(0, limit);
+const text = (field, limit) => {
+  const result = value(field, limit);
+  check(result, 'Uzupełnij wymagane pole.');
+  return result;
+};
+const link = field => {
+  const url = value(field, 2048);
+  if (!url) return '';
+  const parsed = URL.parse(url);
+  check(parsed && ['https:', 'http:'].includes(parsed.protocol) && !parsed.username && !parsed.password, 'Podaj pełny link HTTP lub HTTPS.');
+  return parsed.href;
+};
+const idea = fields => ({
+  title: text(fields.title, 140), description: value(fields.description, 1500),
+  price: value(fields.price, 100), link: link(fields.link),
+});
+
+export function updatePreview(state, actor, action, fields, { id, now }) {
+  const next = structuredClone(state);
+  const me = next.people.find(person => person.id === actor);
+  check(me);
+  const recipient = next.people.find(person => person.id === me.recipient);
+  const day = warsawDate.format(now);
+  const ownItem = () => me.items.find(item => item.id === fields.item);
+  const newIdea = input => ({ ...idea(input), id, createdAt: day, threads: [] });
+  switch (action) {
+    case 'add':
+      check(me.state === 'open');
+      me.items.push(newIdea(fields));
+      break;
+    case 'edit':
+      check(me.state === 'open' && ownItem());
+      Object.assign(ownItem(), idea(fields));
+      break;
+    case 'delete':
+      check(me.state === 'open' && ownItem());
+      me.items = me.items.filter(item => item.id !== fields.item);
+      break;
+    case 'question': {
+      const item = recipient?.items.find(item => item.id === fields.item);
+      check(item && recipient.state !== 'bought');
+      item.threads.push({ id, kind: 'question', question: text(fields.text, 700), createdAt: day, answers: [], unreadByOwner: true });
+      break;
+    }
+    case 'reply':
+    case 'note': {
+      const item = ownItem();
+      check(item && me.state !== 'bought');
+      const entry = { answer: value(fields.text, 1200), link: link(fields.link), createdAt: day };
+      check(entry.answer || entry.link, 'Dodaj odpowiedź, komentarz lub link.');
+      if (action === 'note') item.threads.push({ id, kind: 'note', ...entry });
+      else {
+        const thread = item.threads.find(thread => thread.id === fields.thread && thread.kind === 'question');
+        check(thread);
+        thread.answers.push(entry);
+      }
+      break;
+    }
+    case 'read':
+      for (const item of me.items) for (const thread of item.threads) delete thread.unreadByOwner;
+      if (me.state === 'open') for (const suggestion of me.suggestions) delete suggestion.unreadByOwner;
+      break;
+    case 'suggest':
+      check(maySuggest(recipient));
+      recipient.suggestions.push({ ...newIdea(fields), status: 'pending', unreadByOwner: true });
+      break;
+    case 'decide': {
+      const suggestion = me.suggestions.find(suggestion => suggestion.id === fields.suggestion);
+      check(me.state === 'open' && suggestion?.status === 'pending' && ['accepted', 'rejected'].includes(fields.decision));
+      suggestion.status = fields.decision;
+      suggestion.comment = value(fields.comment, 500);
+      if (fields.decision === 'accepted') me.items.push(newIdea(suggestion));
+      break;
+    }
+    case 'mode':
+      check(me.state === 'open' && ['unlimited', 'single', 'none'].includes(fields.mode));
+      me.mode = fields.mode;
+      if (me.mode === 'none') me.suggestions = me.suggestions.filter(suggestion => suggestion.status !== 'pending');
+      break;
+    case 'choice':
+    case 'unlock':
+    case 'purchase': {
+      const [before, after] = { choice: ['open', 'selected'], unlock: ['selected', 'open'], purchase: ['selected', 'bought'] }[action];
+      check(recipient?.state === before);
+      recipient.state = after;
+      recipient.unlocked = action === 'unlock';
+      break;
+    }
+    case 'food-add':
+    case 'food-claim':
+    case 'food-release':
+    case 'food-comment':
+    case 'food-reply': {
+      const food = next.food;
+      check(food?.enabled);
+      const entry = { id, authorId: actor, authorName: me.name, createdAt: warsawDateTime.format(now), replies: [], text: '' };
+      if (action === 'food-add') {
+        check(food.allowProposals);
+        const title = text(fields.title, 140);
+        check(!food.items.some(item => item.title.toLocaleLowerCase('pl') === title.toLocaleLowerCase('pl')), 'Ta pozycja już jest na liście.');
+        food.items.push({ id, title, claimedBy: null, organizerProvided: false });
+        food.feed.push({ ...entry, kind: 'added', itemTitle: title });
+      } else if (action === 'food-comment') {
+        food.feed.push({ ...entry, kind: 'comment', text: text(fields.text, 1200) });
+      } else if (action === 'food-reply') {
+        const parent = food.feed.find(entry => entry.id === fields.entry);
+        check(parent);
+        parent.replies.push({ ...entry, text: text(fields.text, 1200) });
+      } else {
+        const item = food.items.find(item => item.id === fields.item);
+        const claim = action === 'food-claim';
+        check(item && !item.organizerProvided && (claim ? !item.claimedBy : item.claimedBy === actor));
+        item.claimedBy = claim ? actor : null;
+        food.feed.push({ ...entry, kind: claim ? 'claimed' : 'released', itemTitle: item.title });
+      }
+      break;
+    }
+    default:
+      check(false);
+  }
+  return next;
+}
+
+function maySuggest(recipient) {
+  return recipient?.state === 'open' && recipient.mode !== 'none' &&
+    (recipient.mode !== 'single' || recipient.suggestions.every(suggestion => suggestion.status !== 'pending'));
+}
+
+const node = (tag, className, ...children) => {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  el.append(...children.filter(child => child != null && child !== false));
+  return el;
+};
+const button = (label, onClick, style = '') => {
+  const el = node('button', 'btn ' + style, label);
+  el.type = 'button';
+  el.addEventListener('click', onClick);
+  return el;
+};
+const status = message => {
+  const el = node('div', 'notice mt-sm', message);
+  el.setAttribute('role', 'status');
+  el.tabIndex = -1;
+  return el;
+};
+const date = day => day ? node('time', 'entry-date tiny', day.slice(0, 10)) : null;
+const ref = url => url ? node('p', 'small muted', url) : null;
+const presentIdea = item => node('div', 'gift-main',
+  node('span', 'gift-title', item.title), item.description && node('span', 'gift-desc multiline', item.description),
+  item.price && node('span', 'gift-price', item.price), date(item.createdAt));
+const field = (name, label, { max = 1200, initial = '', multiline = false, required = false, type = 'text' } = {}) => {
+  const input = node(multiline ? 'textarea' : 'input');
+  if (!multiline) input.type = type;
+  input.name = name;
+  input.value = initial;
+  input.maxLength = max;
+  input.required = required;
+  input.autocomplete = 'off';
+  return [node('label', '', label, input), input];
+};
+function form(label, fields, submit, extra) {
+  const error = node('p', 'error');
+  error.setAttribute('role', 'alert');
+  error.tabIndex = -1;
+  const save = node('button', 'btn', label);
+  save.type = 'submit';
+  const el = node('form', 'form', ...fields.map(([wrapper]) => wrapper), extra, error, save);
+  el.method = 'post';
+  el.autocomplete = 'off';
+  el.addEventListener('submit', event => {
+    event.preventDefault();
+    try {
+      submit(Object.fromEntries(new FormData(el)));
+    } catch (err) {
+      error.textContent = err.message;
+      error.focus();
+    }
+  });
+  return el;
+}
+
+function startPreview(data) {
+  const main = document.querySelector('main');
+  const banner = main.querySelector('.preview-notice');
+  const reset = document.querySelector('[data-preview-reset]');
+  const storage = (scope = data.scope) => previewStore(localStorage, new URL('.', location.href).pathname + scope, data.state);
+  if (reset) {
+    reset.addEventListener('click', () => {
+      if (!confirm('Usunąć wszystkie próbne zmiany z tej przeglądarki?')) return;
+      try {
+        for (const scope of data.resetScopes) storage(scope).reset();
+        reset.replaceWith(status('Usunięto próbne zmiany.'));
+      } catch {
+        banner.append(' Nie można wyczyścić danych w tej przeglądarce.');
+      }
+    });
+  }
+  if (!data.actor) return;
+  const screen = main.querySelector('[data-preview-screen]');
+  let oldest = false;
+  let openActivity = new Set();
+  let currentForm;
+  let state;
+  try {
+    state = storage().read();
+  } catch {
+    banner.append(' Zapis w tej przeglądarce jest niedostępny.');
+    return;
+  }
+  const me = () => state.people.find(person => person.id === data.actor);
+  const recipient = () => state.people.find(person => person.id === me().recipient);
+  const pending = person => person.suggestions.filter(s => s.status === 'pending');
+  const unread = person => [
+    ...person.items.flatMap(item => item.threads),
+    ...(person.state === 'open' ? pending(person) : []),
+  ].filter(entry => entry.unreadByOwner);
+  const mark = (el, id) => {
+    if (openActivity.has(id)) {
+      el.classList.add('new-activity');
+      el.prepend(node('span', 'new-label', 'Nowe'));
+    }
+    return el;
+  };
+  const badge = () => {
+    const tab = document.querySelector('[data-preview-tab="list"]');
+    if (!tab) return;
+    tab.querySelector('.unread-count')?.remove();
+    tab.querySelector('[data-preview-unread]')?.remove();
+    const count = unread(me()).length;
+    if (!count || data.view === 'list') return;
+    const countEl = node('span', 'unread-count', count);
+    countEl.setAttribute('aria-hidden', 'true');
+    tab.prepend(countEl);
+    const label = node('span', 'sr-only', ' — do przeczytania: ' + count);
+    label.dataset.previewUnread = '';
+    tab.append(label);
+  };
+  const commit = (action, fields = {}) => {
+    const next = updatePreview(storage().read(), data.actor, action, fields, { id: crypto.randomUUID(), now: new Date() });
+    try {
+      storage().write(next);
+    } catch {
+      throw new Error('Nie udało się zapisać zmian w tej przeglądarce.');
+    }
+    state = next;
+  };
+  const apply = (action, fields, message, target) => {
+    commit(action, fields);
+    if (currentForm) {
+      screen.hidden = false;
+      currentForm.remove();
+      currentForm = undefined;
+    }
+    render();
+    const result = status(message);
+    (target && document.getElementById(target) || screen).prepend(result);
+    result.focus();
+    result.scrollIntoView({ block: 'nearest' });
+    return result;
+  };
+  function openForm(title, fields, label, action, fixed, message, target, intro, extra, after) {
+    const back = button('Wróć', () => {
+      currentForm.remove();
+      currentForm = undefined;
+      screen.hidden = false;
+      screen.querySelector('button')?.focus();
+    }, 'quiet');
+    const heading = node('h1', '', title);
+    heading.tabIndex = -1;
+    currentForm = node('div', '', back, heading, intro && node('p', 'lead', intro), form(label, fields, values => {
+      const result = apply(action, { ...values, ...fixed }, message, target);
+      after?.(result);
+    }, extra));
+    screen.hidden = true;
+    screen.after(currentForm);
+    heading.focus();
+    heading.scrollIntoView({ block: 'start' });
+  }
+  function ideaForm(action, item = {}) {
+    const suggestion = action === 'suggest', edit = action === 'edit';
+    const title = suggestion ? 'Zaproponuj pomysł' : edit ? 'Edytuj pomysł' : 'Dodaj pomysł';
+    const fields = [
+      field('title', 'Nazwa pomysłu', { max: 140, initial: item.title, required: true }),
+      field('description', 'Opis (opcjonalnie)', { max: 1500, multiline: true, initial: item.description }),
+      field('price', 'Szacowana cena (opcjonalnie)', { max: 100, initial: item.price }),
+      field('link', 'Link (opcjonalnie)', { max: 2048, initial: item.link, type: 'url' }),
+    ];
+    openForm(title, fields, suggestion ? 'Wyślij propozycję' : edit ? 'Zapisz zmiany' : 'Dodaj', action,
+      { item: item.id }, suggestion ? 'Wysłano propozycję.' : edit ? 'Zapisano zmiany.' : 'Dodano pomysł do listy.',
+      suggestion ? 'suggestions' : edit ? 'item-' + item.id : null,
+      suggestion ? 'Zapytamy anonimowo, czy tej osobie podoba się Twój pomysł.' : 'Osoba, która daje Ci prezent, zobaczy ten pomysł.', null,
+      suggestion ? result => {
+        const href = data.recipientList;
+        if (!href) return;
+        const view = node('a', 'btn secondary mt-sm', 'Zobacz, co widzi odbiorca');
+        view.href = href + '#received-suggestions';
+        result.after(view);
+      } : null);
+  }
+  function discuss(action, item, thread) {
+    const question = action === 'question', reply = action === 'reply';
+    const input = field('text', question ? 'Treść pytania' : reply ? 'Odpowiedź' : 'Komentarz', {
+      multiline: true, required: question, max: question ? 700 : 1200,
+    });
+    const replyFields = question ? [] : [field('link', 'Link (opcjonalnie)', { max: 2048, type: 'url' })];
+    const presets = question ? node('div', 'stack mt', ...data.presets.map(preset => button(preset, () => {
+      input[1].value = preset;
+      input[1].focus();
+    }, 'secondary'))) : null;
+    openForm(question ? 'O co chcesz dopytać?' : reply ? 'Twoja odpowiedź' : 'Skomentuj', [input, ...replyFields],
+      question ? 'Wyślij anonimowo' : reply ? 'Wyślij odpowiedź' : 'Zapisz komentarz', action,
+      { item: item.id, thread: thread?.id }, question ? 'Wysłano pytanie.' : reply ? 'Zapisano odpowiedź.' : 'Zapisano komentarz.',
+      'item-' + item.id, question ? recipient().name + ' nie zobaczy, kto pyta.' : thread?.question, presets);
+  }
+  function gift(item, owner, person) {
+    const open = person.state === 'open', writable = person.state !== 'bought';
+    const controls = [
+      owner && open && button('Edytuj', () => ideaForm('edit', item)),
+      owner && open && button('Usuń', () => openForm('Usunąć ten pomysł?', [], 'Tak, usuń', 'delete', { item: item.id }, 'Usunięto pomysł z listy.', null, item.title), 'danger-outline'),
+      owner && writable && button('Skomentuj', () => discuss('note', item), 'quiet'),
+      !owner && writable && button('Zapytaj anonimowo', () => discuss('question', item)),
+    ].filter(Boolean);
+    const discussion = item.threads.map(thread => {
+      if (thread.kind === 'note') return node('div', 'item-note', node('strong', '', 'Komentarz'),
+        node('p', 'multiline', thread.answer), ref(thread.link), date(thread.createdAt));
+      return mark(node('div', 'question', node('strong', '', owner ? 'Anonimowe pytanie:' : 'Twoje anonimowe pytanie:'),
+        node('p', 'multiline', thread.question), date(thread.createdAt),
+        ...thread.answers.map(answer => node('div', 'answer', node('strong', '', 'Odpowiedź:'),
+          node('p', 'multiline', answer.answer), ref(answer.link), date(answer.createdAt))),
+        thread.answers.length ? null : node('p', 'question-status', 'Brak odpowiedzi'),
+        owner && writable ? node('div', 'mt-sm', button(thread.answers.length ? 'Dopisz odpowiedź' : 'Odpowiedz',
+          () => discuss('reply', item, thread))) : null), thread.id);
+    });
+    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), ...discussion),
+      controls.length ? node('div', 'gift-actions', ...controls) : null);
+    card.id = 'item-' + item.id;
+    return card;
+  }
+  const cards = (person, owner, empty) => node('div', 'stack mt-sm',
+    ...(person.items.length ? person.items.map(item => gift(item, owner, person)) : [node('div', 'empty', empty)]));
+  function suggestions(person, owner) {
+    const entries = owner ? pending(person) : person.suggestions;
+    const section = node('section', 'section-gap', node('h2', '', owner ? 'Propozycje od osoby, która daje Ci prezent' : 'Twoje propozycje'));
+    section.id = owner ? 'received-suggestions' : 'suggestions';
+    if (owner) section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
+    else if (maySuggest(person)) section.append(node('div', 'mt-sm', button('Zaproponuj pomysł', () => ideaForm('suggest'))));
+    else if (person.state === 'open') section.append(node('p', 'notice', person.mode === 'none'
+      ? 'Ta osoba nie przyjmuje teraz propozycji.' : 'Poczekaj na odpowiedź przed wysłaniem kolejnej propozycji.'));
+    section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
+      const card = node('article', 'suggestion-box', presentIdea(entry), ref(entry.link));
+      if (!owner) {
+        const label = entry.status === 'accepted' ? 'Przyjęta' : entry.status === 'rejected' ? 'Odrzucona' :
+          person.state === 'selected' ? 'Odpowiedź wstrzymana — lista jest zablokowana' :
+            person.state === 'bought' ? 'Zamknięta bez odpowiedzi' : 'Czeka na odpowiedź';
+        card.append(node('strong', 'suggestion-status ' + entry.status, label));
+        if (entry.comment) card.append(node('p', 'response-comment multiline', entry.comment));
+      } else {
+        card.append(node('div', 'action-row', ...['accepted', 'rejected'].map(decision => {
+          const accept = decision === 'accepted';
+          const label = accept ? 'Podoba mi się' : 'Nie, dziękuję';
+          return button(label, () => openForm(accept ? 'Podoba Ci się ten pomysł?' : 'Odrzucić propozycję?',
+            [field('comment', 'Krótki komentarz (opcjonalnie)', { multiline: true, max: 500 })], label, 'decide',
+            { suggestion: entry.id, decision }, accept ? 'Dodano propozycję do listy.' : 'Odrzucono propozycję.',
+            null, entry.title, accept ? node('p', 'notice', 'Pomysł trafi na Twoją listę. To nie znaczy, że dostaniesz właśnie ten prezent.') : null));
+        })));
+      }
+      return owner ? mark(card, entry.id) : card;
+    })));
+    return section;
+  }
+  function list() {
+    const person = me(), open = person.state === 'open';
+    const title = node('h1', '', data.title);
+    const intro = node('p', 'lead', 'Podpowiedz, co chcesz dostać.');
+    const stateNote = open ? (person.unlocked ? 'Twoja lista jest znowu odblokowana.' : '') :
+      person.state === 'selected' ? 'Twoja lista jest zablokowana. Nadal możesz odpowiadać na pytania i dodawać komentarze.' :
+        'Prezent dla Ciebie jest już kupiony. Teraz czekamy na święta.';
+    const settings = node('fieldset', 'form-group preference-options', node('legend', '', 'Czy przyjmujesz propozycje prezentów?'));
+    for (const [mode, label] of [['unlimited', 'Tak, bez limitu'], ['single', 'Tak, po jednej'], ['none', 'Nie przyjmuję']]) {
+      const input = node('input');
+      input.type = 'radio';
+      input.name = 'mode';
+      input.value = mode;
+      input.checked = person.mode === mode;
+      settings.append(node('label', '', input, node('span', '', label)));
+    }
+    const preferences = form('Zapisz ustawienie', [], fields => {
+      if (fields.mode === 'none' && pending(person).length) {
+        openForm('Przestać przyjmować propozycje?', [], 'Tak, nie przyjmuję propozycji', 'mode', fields, 'Zapisano ustawienie propozycji.',
+          'suggestion-settings', `Propozycje czekające na odpowiedź: ${pending(person).length}. Zostaną usunięte bez odpowiedzi.`);
+      } else apply('mode', fields, 'Zapisano ustawienie propozycji.', 'suggestion-settings');
+    }, settings);
+    const optionPanel = node('section', 'section-gap', preferences);
+    optionPanel.id = 'suggestion-settings';
+    return [title, intro, stateNote && node('p', 'notice mt', stateNote),
+      open && person.items.length < 2 && node('p', 'mt-sm', 'Dodaj 2 lub 3 pomysły, wtedy trudniej zgadnąć, co dostaniesz.'),
+      open && node('div', 'mt', button('Dodaj pomysł', () => ideaForm('add'))),
+      cards(person, true, 'Twoja lista jest pusta.'), open && optionPanel, open && pending(person).length && suggestions(person, true)];
+  }
+  function draw() {
+    const person = recipient();
+    const title = node('h1', 'recipient-title', node('span', 'task', 'Robisz prezent dla:'), node('span', 'recipient-name', person.name));
+    const section = node('section', 'section-gap', node('h2', 'list-heading', 'Lista pomysłów'),
+      cards(person, false, 'Nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.'));
+    const choice = node('section', 'choice-panel section-gap');
+    choice.id = 'choice';
+    const change = (action, label, message, style) => button(label, event => {
+      try {
+        apply(action, {}, message, 'choice');
+      } catch (error) {
+        event.currentTarget.after(status(error.message));
+      }
+    }, style);
+    if (person.state === 'open') choice.append(node('h2', '', 'Wiesz już, co dasz?'),
+      node('p', '', 'Gdy wiesz, co dasz, dotknij „Wiem, co dam”. Lista zostanie zablokowana, a propozycje zamknięte. Możesz ją później odblokować. Nie zapisujemy, co wybierasz.'),
+      node('div', 'mt-sm', change('choice', 'Wiem, co dam', 'Lista zablokowana.')));
+    else if (person.state === 'selected') choice.append(node('h2', '', 'Wiesz, co dasz'), node('p', '', 'Gotowe. Możesz zamknąć aplikację.'),
+      node('div', 'stack mt-sm', change('unlock', 'Zmieniam zdanie, odblokuj listę', 'Lista odblokowana.', 'quiet'),
+        button('Oznacz prezent jako kupiony', () => openForm('Oznaczyć prezent jako kupiony?', [], 'Tak, prezent jest kupiony',
+          'purchase', {}, 'Prezent, który dasz, jest już kupiony.', 'choice',
+          'To opcjonalne. Tego nie da się cofnąć. Lista, pytania i komentarze zamkną się dla Was obojga.'))));
+    else choice.append(node('h2', '', 'Prezent, który dasz, jest już kupiony.'), node('p', '', 'Teraz czekamy na święta.'));
+    return [title, person.state === 'open' && node('p', 'lead', 'Lista to podpowiedzi. Możesz też dać coś spoza listy.'),
+      person.state !== 'open' && choice, section, person.state === 'open' && choice, suggestions(person, false)];
+  }
+  function food() {
+    const food = state.food;
+    const list = node('section', 'mt');
+    list.id = 'food-list';
+    const dishes = food.items.map(dish => {
+      const mine = dish.claimedBy === data.actor;
+      const name = state.people.find(person => person.id === dish.claimedBy)?.name;
+      const label = dish.organizerProvided ? 'Zapewnia organizator' : name ? 'Zajęte: ' + name + (mine ? ' (Ty)' : '') : 'Wolne';
+      const type = dish.organizerProvided ? 'organizer' : mine ? 'mine' : name ? 'claimed' : 'free';
+      const row = node('div', 'food-row', node('div', 'food-info', node('strong', 'food-title', dish.title), node('span', 'food-status ' + type, label)));
+      const article = node('article', 'food-item', row);
+      article.id = 'food-item-' + dish.id;
+      if (!dish.organizerProvided && (mine || !name)) row.append(node('div', 'food-action', button(mine ? 'Zrezygnuj' : 'Zrobię to', () => {
+        try {
+          apply(mine ? 'food-release' : 'food-claim', { item: dish.id },
+            mine ? 'Zrezygnowano — pozycja jest znowu wolna.' : 'Zapisano: bierzesz tę pozycję.', article.id);
+        } catch (error) {
+          row.after(status(error.message));
+        }
+      }, mine ? 'secondary food-btn' : 'food-btn')));
+      return article;
+    });
+    list.append(node('div', 'stack mt-sm', ...dishes));
+    if (food.allowProposals) list.append(form('Dodaj pozycję', [field('title', 'Dodaj nową pozycję do listy', { max: 140, required: true })],
+      values => apply('food-add', values, 'Dodano pozycję do listy.', 'food-list')));
+    const sort = node('div', 'sort-toggle', ...[false, true].map(asc => button(asc ? 'Od najstarszych' : 'Od najnowszych', () => {
+      oldest = asc;
+      render();
+      document.querySelector('.sort-link.active').focus();
+    }, 'sort-link' + (oldest === asc ? ' active' : ''))));
+    const feed = node('section', 'section-gap', node('div', 'feed-header', node('h2', '', 'Komentarze i wydarzenia'), sort));
+    feed.id = 'food-feed';
+    const when = stamp => stamp && node('time', 'entry-date tiny', stamp);
+    const head = entry => node('div', 'feed-head', node('strong', '', entry.authorName || 'Organizator'), when(entry.createdAt));
+    const entries = oldest ? food.feed : food.feed.toReversed();
+    feed.append(form('Wyślij', [field('text', 'Dodaj komentarz', { multiline: true, required: true })],
+      values => apply('food-comment', values, 'Dodano komentarz.', 'food-feed')), node('div', 'feed-list mt', ...entries.map(entry => {
+      const action = { added: 'dodaje:', claimed: 'bierze:', released: 'rezygnuje z:' }[entry.kind];
+      const article = node('article', 'feed-entry ' + (action ? 'feed-event-row' : 'feed-comment'), head(entry),
+        action ? node('p', 'feed-event', action + ' ', node('strong', '', entry.itemTitle)) : node('p', 'multiline feed-body', entry.text),
+        ...entry.replies.map(reply => node('div', 'feed-reply', head(reply), node('p', 'multiline', reply.text))));
+      article.id = 'food-entry-' + entry.id;
+      article.append(node('details', 'reply-box', node('summary', 'reply-toggle', 'Odpowiedz'),
+        form('Wyślij', [field('text', 'Odpowiedź', { multiline: true, required: true })],
+          values => apply('food-reply', { ...values, entry: entry.id }, 'Dodano odpowiedź.', article.id))));
+      return article;
+    })));
+    return [node('h1', '', data.title), node('p', 'lead', 'Lista potraw na spotkanie. Każdy widzi, kto co przygotowuje.'), list, feed];
+  }
+  function render() {
+    const view = { list, recipient: draw, food }[data.view];
+    if (screen && view) screen.replaceChildren(...view().filter(Boolean));
+    badge();
+  }
+  if (data.view === 'list') {
+    openActivity = new Set(unread(me()).map(entry => entry.id));
+    if (openActivity.size) {
+      try {
+        commit('read');
+      } catch {
+        banner.append(' Nie można oznaczyć zmian jako przeczytane.');
+      }
+    }
+  }
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    try {
+      state = storage().read();
+      openActivity.clear();
+      render();
+    } catch {
+      banner.append(' Nie można odczytać próbnych zmian.');
+    }
+  });
+  render();
+  if (location.hash === '#received-suggestions') document.getElementById('received-suggestions')?.scrollIntoView();
+}
+
+if (typeof document !== 'undefined') {
+  const metadata = document.querySelector('meta[name="preview-data"]');
+  if (metadata) startPreview(JSON.parse(metadata.content));
+}
