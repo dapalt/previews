@@ -186,6 +186,8 @@ export function metricsContent(summary) {
   const note = through ? `<p class="notice mt-sm">Dane na koniec wczoraj (<time datetime="${through}">${through.slice(8)}.${through.slice(5, 7)}</time>). Dzisiejsze pojawią się po północy czasu polskiego.</p>` : '';
   if (!days) return '<p class="notice mt-sm">Statystyki pojawią się po pierwszej północy czasu polskiego od rozpoczęcia zbierania danych.</p>';
   const validDays = days.filter(({ date }) => validMetricDate(date));
+  const activity = validDays.slice().reverse();
+  if (activity.length && through > activity.at(-1).date) activity.push({ date: through, visits: 0, actions: 0 });
   const dailyRows = validDays.map(({ date, visits, actions }) => [date, visits, actions]);
   const mostVisits = dailyRows.reduce((max, [, visits]) => Math.max(max, metricNumber(visits)), 0);
   return `${note}<section class="section-gap" aria-labelledby="metrics-progress"><h2 id="metrics-progress">Postępy</h2>
@@ -199,9 +201,9 @@ ${distribution ? metricsTable(['Liczba wejść', 'Osoby'], distribution, partici
 <section class="section-gap" aria-labelledby="metrics-daily"><h2 id="metrics-daily">Aktywność według dni</h2>
 ${dailyRows.length ? '<p class="mt-sm">Pełny pasek oznacza dzień z największą liczbą wejść.</p>' +
     metricsTable(['Dzień', 'Wejścia', 'Akcje'], dailyRows, mostVisits) +
-    '<h3 class="mt">Aktywność w czasie</h3>' + (validDays.length === 1 ? oneDay :
+    '<h3 class="mt">Aktywność w czasie</h3>' + (activity.length === 1 ? oneDay :
       '<p class="mt-sm">Brak dnia w tabeli oznacza 0 wejść i 0 akcji.</p>') +
-    timeline(validDays.slice().reverse(), activitySeries, 'metric-activity-trend', true) :
+    timeline(activity, activitySeries, 'metric-activity-trend', true) :
     '<p class="mt-sm">Nie odnotowano jeszcze aktywności.</p>'}</section>
 <section class="section-gap" aria-labelledby="metrics-features"><h2 id="metrics-features">Użycie funkcji</h2>
 <p class="mt-sm">„Osoby” to liczba obecnych uczestników, którzy użyli danej funkcji.</p>
