@@ -111,7 +111,7 @@ export function metricsReport(event, history, now = new Date()) {
 
 const metricNumber = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
 const progressSeries = [
-  ['entered', 'Weszli na swoje konto', 'Wejścia na konto'],
+  ['entered', 'Weszli na swoje konto', 'Weszli na konto'],
   ['pins', 'Mają ustawiony PIN', 'Ustawiony PIN'],
   ['revealed', 'Odkryli wynik losowania', 'Odkryty wynik losowania'],
   ['lists', 'Mają co najmniej jeden pomysł', 'Co najmniej jeden pomysł'],
@@ -132,50 +132,46 @@ ${head.map(label => `<th scope="col">${label}</th>`).join('')}</tr></thead><tbod
 
 const validMetricDate = date => typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date));
 const calendarDay = date => Date.parse(date) / dayMillis;
-const oneDay = '<p class="mt-sm">Na razie jest tylko jeden dzień danych. Linia pojawi się, gdy będą dane z kolejnego dnia.</p>';
+const oneDay = '<p class="mt-sm">Na razie są dane tylko z jednego dnia. Linie pojawią się po zakończeniu kolejnego dnia objętego statystykami.</p>';
 
-function timeline(rows, series, className, zeroGaps = false) {
+function metricChart(rows, key, label, max, heading, zeroGaps) {
   const first = calendarDay(rows[0].date);
   const span = calendarDay(rows.at(-1).date) - first;
-  const max = rows.reduce((highest, row) => Math.max(highest, ...series.map(([key]) => metricNumber(row[key]))), 1);
   const x = day => span ? 48 + (day - first) / span * 268 : 182;
-  const y = n => 148 - n / max * 126;
+  const y = n => 92 - n / max * 70;
   const ticks = max > 1 ? [0, Math.floor(max / 2), max] : [0, max];
   const dateLabels = span
     ? [[first, 'start'], ...(span >= 2 ? [[first + Math.round(span / 2), 'middle']] : []), [first + span, 'end']]
     : [[first, 'middle']];
-  const plot = series.map(([key]) => {
-    const raw = rows.map(row => [calendarDay(row.date), metricNumber(row[key])]);
-    const points = raw.flatMap(([day, value], index) => {
-      const previous = raw[index - 1]?.[0];
-      if (previous === undefined || day - previous <= 1) return [[day, value]];
-      if (!zeroGaps) return [[day - 1, raw[index - 1][1]], [day, value]];
-      return day - previous === 2 ? [[day - 1, 0], [day, value]] : [[previous + 1, 0], [day - 1, 0], [day, value]];
-    });
-    return `<g class="metric-trend-${key}">
-${points.length > 1 ? `<polyline points="${points.map(([day, value]) => `${x(day).toFixed(2)},${y(value).toFixed(2)}`).join(' ')}"/>` : ''}
-${(raw.length <= 24 ? raw : []).map(([day, value]) => `<circle cx="${x(day).toFixed(2)}" cy="${y(value).toFixed(2)}" r="3"/>`).join('')}</g>`;
-  }).join('');
-  return `<div class="metric-timeline ${className}">
-<svg aria-hidden="true" focusable="false" viewBox="0 0 332 181">
+  const raw = rows.map(row => [calendarDay(row.date), metricNumber(row[key])]);
+  const points = raw.flatMap(([day, value], index) => {
+    const previous = raw[index - 1]?.[0];
+    if (previous === undefined || day - previous <= 1) return [[day, value]];
+    if (!zeroGaps) return [[day - 1, raw[index - 1][1]], [day, value]];
+    return day - previous === 2 ? [[day - 1, 0], [day, value]] : [[previous + 1, 0], [day - 1, 0], [day, value]];
+  });
+  return `<div class="metric-chart metric-trend-${key}">
+<${heading}>${label}: ${raw.at(-1)[1]}</${heading}>
+<svg aria-hidden="true" focusable="false" viewBox="0 0 332 125">
 ${ticks.map(n => `<path class="metric-gridline" d="M48 ${y(n)}H316"/><text x="42" y="${y(n) + 5}" text-anchor="end">${n}</text>`).join('')}
 ${dateLabels.map(([day, anchor]) => {
     const [, month, date] = new Date(day * 86_400_000).toISOString().slice(0, 10).split('-');
-    return `<text x="${x(day)}" y="174" text-anchor="${anchor}">${date}.${month}</text>`;
+    return `<text x="${x(day)}" y="118" text-anchor="${anchor}">${date}.${month}</text>`;
   }).join('')}
-${plot}</svg>
-<ul class="metric-legend">${series.map(([key, label]) =>
-    `<li><svg aria-hidden="true" focusable="false" class="metric-trend-${key}" viewBox="0 0 28 10"><path d="M1 5H27"/></svg>${label}</li>`).join('')}</ul>
+${points.length > 1 ? `<polyline points="${points.map(([day, value]) => `${x(day).toFixed(2)},${y(value).toFixed(2)}`).join(' ')}"/>` : ''}
+${(raw.length <= 24 ? raw : []).map(([day, value]) => `<circle cx="${x(day).toFixed(2)}" cy="${y(value).toFixed(2)}" r="3"/>`).join('')}
+</svg>
 </div>`;
 }
 
 function progressTimeline(rows) {
   if (!rows.length) return '';
   const series = progressSeries.map(([key, , label]) => [key, label]);
+  const max = rows.reduce((highest, { participants }) => Math.max(highest, metricNumber(participants)), 1);
   return `<section class="section-gap" aria-labelledby="metrics-progress-history"><h2 id="metrics-progress-history">Postępy w czasie</h2>
-<p class="mt-sm">Liczba osób na koniec dnia. Wcześniejszych wyników nie odtwarzamy. W dniach bez zmian obowiązuje ostatni zapis.</p>
+<p class="mt-sm">Wykresy pokazują liczbę osób na koniec dnia, a liczba przy tytule dotyczy ostatniego dnia. Wcześniejszych wyników nie odtwarzamy. W dniach bez zmian obowiązuje ostatni zapis.</p>
 ${rows.length === 1 ? oneDay : ''}
-${timeline(rows, series, 'metric-progress-trend')}
+<div class="metric-charts metric-progress-trend">${series.map(([key, label]) => metricChart(rows, key, label, max, 'h3')).join('')}</div>
 <details class="mt-sm"><summary>Dokładne liczby według dni</summary>
 ${rows.slice().reverse().map(row => `<h3 class="mt-sm"><time datetime="${row.date}">${row.date}</time></h3>
 ${metricsFacts(series.map(([key, label]) => [label, row[key]]))}`).join('')}</details></section>`;
@@ -183,13 +179,14 @@ ${metricsFacts(series.map(([key, label]) => [label, row[key]]))}`).join('')}</de
 
 export function metricsContent(summary) {
   const { participants, features, days, distribution, progress = [], through } = summary;
-  const note = through ? `<p class="notice mt-sm">Dane na koniec wczoraj (<time datetime="${through}">${through.slice(8)}.${through.slice(5, 7)}</time>). Dzisiejsze pojawią się po północy czasu polskiego.</p>` : '';
-  if (!days) return '<p class="notice mt-sm">Statystyki pojawią się po pierwszej północy czasu polskiego od rozpoczęcia zbierania danych.</p>';
+  const note = through ? `<p class="notice mt-sm">Stan na koniec wczorajszego dnia (<time datetime="${through}">${through.slice(8)}.${through.slice(5, 7)}</time>). Dzisiejsze dane pojawią się po północy czasu polskiego.</p>` : '';
+  if (!days) return '<p class="notice mt-sm">Statystyki pojawią się po zakończeniu pierwszego dnia zbierania danych, o północy czasu polskiego.</p>';
   const validDays = days.filter(({ date }) => validMetricDate(date));
   const activity = validDays.slice().reverse();
   if (activity.length && through > activity.at(-1).date) activity.push({ date: through, visits: 0, actions: 0 });
   const dailyRows = validDays.map(({ date, visits, actions }) => [date, visits, actions]);
   const mostVisits = dailyRows.reduce((max, [, visits]) => Math.max(max, metricNumber(visits)), 0);
+  const activityMax = validDays.reduce((max, { visits, actions }) => Math.max(max, metricNumber(visits), metricNumber(actions)), 1);
   return `${note}<section class="section-gap" aria-labelledby="metrics-progress"><h2 id="metrics-progress">Postępy</h2>
 <p class="mt-sm">Pełny pasek oznacza wszystkich uczestników.</p>
 ${metricsFacts([['Uczestnicy', participants], ...progressSeries.map(([key, label]) => [label, summary[key], participants])])}</section>
@@ -201,9 +198,9 @@ ${distribution ? metricsTable(['Liczba wejść', 'Osoby'], distribution, partici
 <section class="section-gap" aria-labelledby="metrics-daily"><h2 id="metrics-daily">Aktywność według dni</h2>
 ${dailyRows.length ? '<p class="mt-sm">Pełny pasek oznacza dzień z największą liczbą wejść.</p>' +
     metricsTable(['Dzień', 'Wejścia', 'Akcje'], dailyRows, mostVisits) +
-    '<h3 class="mt">Aktywność w czasie</h3>' + (activity.length === 1 ? oneDay :
+    '<h3 class="mt">Aktywność w czasie</h3><p class="mt-sm">Liczba przy tytule dotyczy ostatniego dnia.</p>' + (activity.length === 1 ? oneDay :
       '<p class="mt-sm">Brak dnia w tabeli oznacza 0 wejść i 0 akcji.</p>') +
-    timeline(activity, activitySeries, 'metric-activity-trend', true) :
+    `<div class="metric-charts metric-activity-trend">${activitySeries.map(([key, label]) => metricChart(activity, key, label, activityMax, 'h4', true)).join('')}</div>` :
     '<p class="mt-sm">Nie odnotowano jeszcze aktywności.</p>'}</section>
 <section class="section-gap" aria-labelledby="metrics-features"><h2 id="metrics-features">Użycie funkcji</h2>
 <p class="mt-sm">„Osoby” to liczba obecnych uczestników, którzy użyli danej funkcji.</p>
