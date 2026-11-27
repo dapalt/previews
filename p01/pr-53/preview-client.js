@@ -485,7 +485,7 @@ function startPreview(data) {
   const applyFood = (action, fields, message, target) => {
     const id = commit(action, fields);
     render();
-    const toast = node('p', 'food-toast', typeof message === 'function' ? message(id) : message);
+    const toast = node('p', 'food-toast', node('span', '', typeof message === 'function' ? message(id) : message));
     toast.setAttribute('aria-hidden', 'true');
     screen.prepend(toast);
     const result = document.getElementById(typeof target === 'function' ? target(id) : target);

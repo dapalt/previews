@@ -9,7 +9,8 @@ button{cursor:pointer}
 button:disabled{cursor:default;opacity:.58}
 :focus-visible{outline:3px solid var(--green);outline-offset:4px}
 [data-action-focus]:focus{outline:3px solid var(--green);outline-offset:3px}
-.food-toast{position:fixed;inset-inline:0;bottom:calc(var(--bottom-bar-height,6.5rem) + 1rem + env(safe-area-inset-bottom));z-index:9;width:min(calc(100% - 2rem),35rem);margin:0 auto;padding:0.75rem 1rem;border-radius:10px;background:var(--green);color:var(--button-ink);font-weight:650;pointer-events:none;animation:food-toast-hide 3s step-end forwards}
+.food-toast{--toast-bottom:calc(var(--bottom-bar-height,6.5rem) + 1rem + env(safe-area-inset-bottom));--toast-top:calc(max(var(--topbar-height,0px),5rem + env(safe-area-inset-top)) + 1rem);position:fixed;inset-inline:0;bottom:var(--toast-bottom);z-index:9;width:min(calc(100% - 2rem),35rem);max-height:calc(100vh - var(--toast-top) - var(--toast-bottom));max-height:calc(100dvh - var(--toast-top) - var(--toast-bottom));margin:0 auto;overflow:hidden;border-radius:10px;background:var(--green);color:var(--button-ink);font-weight:650;pointer-events:none;animation:food-toast-hide 3s step-end forwards}
+.food-toast span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;margin:0.75rem 1rem}
 @keyframes food-toast-hide{to{visibility:hidden}}
 a{color:var(--green);text-underline-offset:4px;overflow-wrap:anywhere}
 h1,h2,h3,p{margin:0;overflow-wrap:anywhere}
