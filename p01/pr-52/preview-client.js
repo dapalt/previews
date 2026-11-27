@@ -104,6 +104,38 @@ ${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, pe
 
 export const editableFieldSelector = ':is(textarea, input:is([type=text], [type=password], [type=search], [type=email], [type=url], [type=tel], [type=number], :not([type]))):not(:disabled, [readonly])';
 
+function revealCaret(field) {
+  if (field.scrollHeight <= field.clientHeight) return;
+  const caret = field.selectionDirection === 'backward' ? field.selectionStart : field.selectionEnd;
+  if (caret === field.value.length) {
+    field.scrollTop = field.scrollHeight;
+    return;
+  }
+
+  const style = getComputedStyle(field);
+  const mirror = document.createElement('div');
+  Object.assign(mirror.style, { position: 'fixed', visibility: 'hidden', left: '-10000px', top: '0',
+    width: field.clientWidth + 'px', boxSizing: 'border-box' });
+  for (const property of ['font', 'lineHeight', 'letterSpacing', 'padding', 'whiteSpace', 'overflowWrap',
+    'wordBreak', 'textIndent', 'tabSize', 'direction']) mirror.style[property] = style[property];
+  const text = document.createTextNode(field.value[caret] === '\n'
+    ? field.value.slice(0, caret) + '\u200b' + field.value.slice(caret) : field.value);
+  mirror.append(text);
+  document.body.append(mirror);
+  const range = document.createRange();
+  range.setStart(text, caret);
+  range.setEnd(text, caret + 1);
+  const { top, bottom } = range.getBoundingClientRect();
+  const lineHeight = parseFloat(style.lineHeight);
+  const leading = Number.isFinite(lineHeight) ? Math.max(0, lineHeight - (bottom - top)) / 2 : 0;
+  const origin = mirror.getBoundingClientRect().top;
+  mirror.remove();
+  const visibleTop = field.scrollTop;
+  const visibleBottom = visibleTop + field.clientHeight;
+  if (top - origin - leading < visibleTop) field.scrollTop = top - origin - leading;
+  else if (bottom - origin + leading > visibleBottom) field.scrollTop = bottom - origin + leading - field.clientHeight;
+}
+
 export function keepEditingFieldVisible() {
   const root = document.documentElement;
   const viewport = window.visualViewport;
@@ -136,7 +168,9 @@ export function keepEditingFieldVisible() {
     bottom -= 8;
     if (bottom <= top) return;
 
+    const previousHeight = field.clientHeight;
     root.style.setProperty('--editing-height', Math.floor(bottom - top) + 'px');
+    if (field.tagName === 'TEXTAREA' && field.clientHeight < previousHeight) revealCaret(field);
     const rect = field.getBoundingClientRect();
     const delta = rect.top < top ? rect.top - top : Math.max(0, rect.bottom - bottom);
     if (delta) window.scrollBy({ top: delta, behavior: 'instant' });
@@ -162,6 +196,7 @@ const warsawDateTime = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Wars
 export function previewStore(storage, scope, initial) {
   const key = storagePrefix + scope;
   return {
+    key,
     read: () => JSON.parse(storage.getItem(key) ?? 'null') ?? structuredClone(initial),
     write: state => storage.setItem(key, JSON.stringify(state)),
     reset: () => storage.removeItem(key),
@@ -837,6 +872,18 @@ function startPreview(data) {
     }
   }
   openUnread();
+  if (state.food?.enabled && data.view !== 'food') {
+    const local = storage();
+    window.addEventListener('storage', event => {
+      if (event.storageArea !== localStorage || (event.key !== local.key && event.key !== null)) return;
+      try {
+        const latest = local.read();
+        badge('food', unreadFood(latest.food, latest.people.find(person => person.id === data.actor)).length);
+      } catch {
+        // Keep the current badge if preview storage cannot be read.
+      }
+    });
+  }
   window.addEventListener('pageshow', event => {
     if (!event.persisted) return;
     try {
