@@ -66,6 +66,12 @@ svg{vertical-align:middle;flex-shrink:0}
 .notice h3{font-size:1.25rem;margin-bottom:6px}
 .notice.warning{background:var(--warning);color:var(--warning-ink);border-color:transparent}
 .notice .small{color:inherit}
+.tab-hint{margin-bottom:20px}
+.tab-hint .btn{margin-top:12px;width:auto;max-width:100%;min-height:48px;padding-block:8px}
+.help-steps{padding-inline-start:1.5em;margin-bottom:0}
+.help-steps li{padding-inline-start:.25em}
+.help-steps .icon{width:36px;height:36px;margin-inline-end:8px;color:var(--green)}
+.help-steps p{margin-top:4px}
 .empty{border:1px dashed var(--line);border-radius:13px;padding:25px 20px}
 .empty p{font-size:1.0625rem;color:var(--muted);margin-top:10px}
 .empty p:first-child{margin-top:0}
