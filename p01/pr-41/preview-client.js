@@ -68,25 +68,35 @@ export function summarizeMetrics(event) {
 }
 
 const metricNumber = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
-const metricsFacts = rows => '<dl class="metrics-facts">' + rows.map(([label, n]) =>
-  `<div><dt>${label}</dt><dd>${metricNumber(n)}</dd></div>`).join('') + '</dl>';
-const metricsTable = (head, rows) => `<table class="metrics-table"><thead><tr>
+const metricMeasure = (n, max) => {
+  const value = metricNumber(n);
+  if (max === undefined) return value;
+  return `<span class="metric-measure"><meter aria-hidden="true" value="${value}" max="${Math.max(1, metricNumber(max))}"></meter><strong>${value}</strong></span>`;
+};
+const metricsFacts = rows => '<dl class="metrics-facts">' + rows.map(([label, n, max]) =>
+  `<div><dt>${label}</dt><dd>${metricMeasure(n, max)}</dd></div>`).join('') + '</dl>';
+const metricsTable = (head, rows, max) => `<table class="metrics-table"><thead><tr>
 ${head.map(label => `<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows.map(([label, ...counts]) =>
-  `<tr><th scope="row">${label}</th>${counts.map(n => `<td>${metricNumber(n)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  `<tr><th scope="row">${label}</th>${counts.map((n, i) => `<td>${metricMeasure(n, i === 0 ? max : undefined)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 
 export function metricsContent(summary) {
   const { participants, entered, pins, revealed, lists, chosen, purchased, features, days, distribution } = summary;
+  const dailyRows = days.filter(({ date }) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .map(({ date, visits, actions }) => [date, visits, actions]);
+  const mostVisits = dailyRows.reduce((max, [, visits]) => Math.max(max, metricNumber(visits)), 0);
   return `<section class="section-gap" aria-labelledby="metrics-progress"><h2 id="metrics-progress">Postępy</h2>
-${metricsFacts([['Uczestnicy', participants], ['Weszli na swoje konto', entered], ['Mają ustawiony PIN', pins],
-    ['Odkryli wynik losowania', revealed], ['Mają co najmniej jeden pomysł', lists], ['Wiedzą, co dadzą', chosen],
-    ['Oznaczyli prezent jako kupiony', purchased]])}</section>
+<p class="mt-sm">Pełny pasek oznacza wszystkich uczestników.</p>
+${metricsFacts([['Uczestnicy', participants], ['Weszli na swoje konto', entered, participants],
+    ['Mają ustawiony PIN', pins, participants], ['Odkryli wynik losowania', revealed, participants],
+    ['Mają co najmniej jeden pomysł', lists, participants], ['Wiedzą, co dadzą', chosen, participants],
+    ['Oznaczyli prezent jako kupiony', purchased, participants]])}</section>
 <section class="section-gap" aria-labelledby="metrics-visits"><h2 id="metrics-visits">Wejścia na konto</h2>
 <p class="mt-sm">Wejście liczy się po poprawnym PIN-ie lub po otwarciu wspólnego linku na zapamiętanym urządzeniu.</p>
-${distribution ? metricsTable(['Liczba wejść', 'Osoby'], distribution) :
+${distribution ? metricsTable(['Liczba wejść', 'Osoby'], distribution, participants) :
     '<p class="notice mt-sm">Podział wejść jest widoczny od 5 uczestników.</p>'}</section>
 <section class="section-gap" aria-labelledby="metrics-daily"><h2 id="metrics-daily">Aktywność według dni</h2>
-${days.length ? metricsTable(['Dzień', 'Wejścia', 'Akcje'], days.filter(({ date }) => /^\d{4}-\d{2}-\d{2}$/.test(date))
-    .map(({ date, visits, actions }) => [date, visits, actions])) : '<p class="mt-sm">Nie odnotowano jeszcze aktywności.</p>'}</section>
+${dailyRows.length ? '<p class="mt-sm">Pełny pasek oznacza dzień z największą liczbą wejść.</p>' +
+    metricsTable(['Dzień', 'Wejścia', 'Akcje'], dailyRows, mostVisits) : '<p class="mt-sm">Nie odnotowano jeszcze aktywności.</p>'}</section>
 <section class="section-gap" aria-labelledby="metrics-features"><h2 id="metrics-features">Użycie funkcji</h2>
 <p class="mt-sm">„Osoby” to liczba obecnych uczestników, którzy użyli danej funkcji.</p>
 ${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, people }) => [label, total, people]))}</section>`;

@@ -44,10 +44,17 @@ svg{vertical-align:middle;flex-shrink:0}
 .metrics-facts,.metrics-table{margin-top:12px}
 .metrics-facts>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
 .metrics-facts dd{margin:0;font-weight:700}
+.metrics-facts>div:has(.metric-measure){grid-template-columns:1fr;gap:3px}
+.metric-measure{display:grid;grid-template-columns:minmax(0,1fr) minmax(3ch,max-content);align-items:center;gap:8px;font-variant-numeric:tabular-nums}
+.metric-measure meter{appearance:none;display:block;width:100%;height:14px;background:var(--pale);border:1px solid var(--control-line)}
+.metric-measure meter::-webkit-meter-bar{height:100%;background:var(--pale);border:0;border-radius:0}
+.metric-measure meter::-webkit-meter-optimum-value{background:var(--green)}
+.metric-measure meter::-moz-meter-bar{background:var(--green)}
 .metrics-table{width:100%;border-collapse:collapse}
 .metrics-table th,.metrics-table td{padding:10px 4px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}
 .metrics-table th:first-child{text-align:left;overflow-wrap:anywhere}
 .metrics-table tbody th{font-weight:400}
+.metrics-table td:has(.metric-measure){width:46%;vertical-align:middle}
 .stack{display:grid;gap:15px}
 .row{display:flex;align-items:center;gap:12px}
 .spread{justify-content:space-between}
