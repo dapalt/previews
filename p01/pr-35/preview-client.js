@@ -1,3 +1,98 @@
+const metricsDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short' });
+const featureLabels = {
+  ack: 'Potwierdzenia informacji',
+  reveal: 'Odkrycia wyniku losowania',
+  add: 'Dodane pomysły',
+  edit: 'Zmienione pomysły',
+  delete: 'Usunięte pomysły',
+  question: 'Anonimowe pytania',
+  reply: 'Odpowiedzi na pytania',
+  note: 'Komentarze do pomysłów',
+  suggest: 'Wysłane propozycje',
+  accepted: 'Przyjęte propozycje',
+  rejected: 'Odrzucone propozycje',
+  mode: 'Zmiany ustawień propozycji',
+  choice: 'Oznaczenia wyboru prezentu',
+  unlock: 'Cofnięcia wyboru prezentu',
+  purchase: 'Oznaczenia zakupu prezentu',
+  'food-add': 'Jedzenie: dodane pozycje',
+  'food-claim': 'Jedzenie: zajęte pozycje',
+  'food-release': 'Jedzenie: zwolnione pozycje',
+  'food-comment': 'Jedzenie: komentarze',
+  'food-reply': 'Jedzenie: odpowiedzi',
+};
+
+export function recordMetric(event, person, action, body = {}, now = new Date()) {
+  const feature = action === 'decide' ? body.decision : action;
+  if (action !== 'visit' && !Object.hasOwn(featureLabels, feature)) return;
+  const stats = event.metrics ??= { totals: {}, days: {} };
+  const personStats = person.metrics ??= { visits: 0, used: [] };
+  const day = stats.days[metricsDay.format(now)] ??= { visits: 0, actions: 0 };
+  if (action === 'visit') {
+    personStats.visits++;
+    day.visits++;
+  } else {
+    stats.totals[feature] = (stats.totals[feature] ?? 0) + 1;
+    if (!personStats.used.includes(feature)) personStats.used.push(feature);
+    day.actions++;
+  }
+}
+
+export function summarizeMetrics(event) {
+  const { people } = event;
+  const peopleInState = state => people.filter(p => p.state === state).length;
+  const visitCounts = people.map(p => p.metrics?.visits ?? 0);
+  const features = Object.entries(featureLabels)
+    .filter(([key]) => !key.startsWith('food-') || event.food?.enabled || event.metrics?.totals[key])
+    .map(([key, label]) => ({
+      label, total: event.metrics?.totals[key] ?? 0, people: people.filter(p => p.metrics?.used.includes(key)).length,
+    }));
+  return {
+    participants: people.length,
+    entered: visitCounts.filter(n => n > 0).length,
+    pins: people.filter(p => p.pin || p.practicePinSet).length,
+    revealed: people.filter(p => p.revealed).length,
+    lists: people.filter(p => p.items.length > 0).length,
+    chosen: peopleInState('selected') + peopleInState('bought'),
+    purchased: peopleInState('bought'),
+    features,
+    days: Object.entries(event.metrics?.days ?? {}).sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, { visits, actions }]) => ({ date, visits, actions })),
+    distribution: people.length < 5 ? null : [
+      ['0', visitCounts.filter(n => n === 0).length],
+      ['1', visitCounts.filter(n => n === 1).length],
+      ['2–5', visitCounts.filter(n => n >= 2 && n <= 5).length],
+      ['6+', visitCounts.filter(n => n >= 6).length],
+    ],
+  };
+}
+
+const metricNumber = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
+const metricsFacts = rows => '<dl class="metrics-facts">' + rows.map(([label, n]) =>
+  `<div><dt>${label}</dt><dd>${metricNumber(n)}</dd></div>`).join('') + '</dl>';
+const metricsTable = (head, rows) => `<table class="metrics-table"><thead><tr>
+${head.map(label => `<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows.map(([label, ...counts]) =>
+  `<tr><th scope="row">${label}</th>${counts.map(n => `<td>${metricNumber(n)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+
+export function metricsContent(summary) {
+  const { participants, entered, pins, revealed, lists, chosen, purchased, features, days, distribution } = summary;
+  return `<section class="section-gap" aria-labelledby="metrics-progress"><h2 id="metrics-progress">Postępy</h2>
+${metricsFacts([['Uczestnicy', participants], ['Weszli na swoje konto', entered], ['Mają ustawiony PIN', pins],
+    ['Odkryli wynik losowania', revealed], ['Mają co najmniej jeden pomysł', lists], ['Wiedzą, co dadzą', chosen],
+    ['Oznaczyli prezent jako kupiony', purchased]])}</section>
+<section class="section-gap" aria-labelledby="metrics-visits"><h2 id="metrics-visits">Wejścia na konto</h2>
+<p class="mt-sm">Wejście liczy się po poprawnym PIN-ie lub po otwarciu wspólnego linku na zapamiętanym urządzeniu.</p>
+${distribution ? metricsTable(['Liczba wejść', 'Osoby'], distribution) :
+    '<p class="notice mt-sm">Podział wejść jest widoczny od 5 uczestników.</p>'}</section>
+<section class="section-gap" aria-labelledby="metrics-daily"><h2 id="metrics-daily">Aktywność według dni</h2>
+${days.length ? metricsTable(['Dzień', 'Wejścia', 'Akcje'], days.filter(({ date }) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .map(({ date, visits, actions }) => [date, visits, actions])) : '<p class="mt-sm">Nie odnotowano jeszcze aktywności.</p>'}</section>
+<section class="section-gap" aria-labelledby="metrics-features"><h2 id="metrics-features">Użycie funkcji</h2>
+<p class="mt-sm">„Osoby” to liczba obecnych uczestników, którzy użyli danej funkcji.</p>
+${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, people }) => [label, total, people]))}</section>`;
+}
+
+
 const storagePrefix = 'upominki-preview:';
 const warsawDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short' });
 const warsawDateTime = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short', timeStyle: 'short' });
@@ -56,6 +151,15 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
   const ownItem = () => me.items.find(item => item.id === fields.item);
   const newIdea = input => ({ ...idea(input), id, createdAt: day, threads: [] });
   switch (action) {
+    case 'visit':
+      me.practicePinSet = true;
+      break;
+    case 'ack':
+      break;
+    case 'reveal':
+      check(me.recipient && !me.revealed);
+      me.revealed = true;
+      break;
     case 'hint': {
       const { tab } = fields;
       check(['recipient', 'list', 'food', 'details'].includes(tab) && (tab !== 'food' || next.food?.enabled));
@@ -164,6 +268,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
     default:
       check(false);
   }
+  recordMetric(next, me, action, fields, now);
   return next;
 }
 
@@ -241,6 +346,32 @@ function startPreview(data) {
         banner.append(' Nie można wyczyścić danych w tej przeglądarce.');
       }
     });
+  }
+  if (data.view === 'metrics') {
+    const report = main.querySelector('[data-metrics]');
+    const initial = report.innerHTML;
+    const renderMetrics = () => {
+      try {
+        const state = storage().read();
+        report.innerHTML = state ? metricsContent(summarizeMetrics(state)) : initial;
+      } catch {
+        banner.append(' Nie można odczytać próbnych zmian.');
+      }
+    };
+    renderMetrics();
+    window.addEventListener('pageshow', event => { if (event.persisted) renderMetrics(); });
+    return;
+  }
+  if (data.practiceAction) {
+    document.querySelector('[data-preview-practice-action]')?.addEventListener('click', () => {
+      try {
+        const local = storage();
+        local.write(updatePreview(local.read(), data.actor, data.practiceAction, {}, { now: new Date() }));
+      } catch {
+        banner.append(' Nie można zapisać próbnych zmian.');
+      }
+    });
+    if (data.practiceAction === 'visit') return;
   }
   if (!data.actor) return;
   const screen = main.querySelector('[data-preview-screen]');
