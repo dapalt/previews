@@ -38,36 +38,87 @@ export function recordMetric(event, person, action, body = {}, now = new Date())
   }
 }
 
-export function summarizeMetrics(event) {
-  const { people } = event;
+function progressTotals(people) {
   const peopleInState = state => people.filter(p => p.state === state).length;
-  const visitCounts = people.map(p => p.metrics?.visits ?? 0);
-  const features = Object.entries(featureLabels)
-    .filter(([key]) => !key.startsWith('food-') || event.food?.enabled || event.metrics?.totals[key])
-    .map(([key, label]) => ({
-      label, total: event.metrics?.totals[key] ?? 0, people: people.filter(p => p.metrics?.used.includes(key)).length,
-    }));
   return {
-    participants: people.length,
-    entered: visitCounts.filter(n => n > 0).length,
+    entered: people.filter(p => p.metrics?.visits > 0).length,
     pins: people.filter(p => p.pin || p.practicePinSet).length,
     revealed: people.filter(p => p.revealed).length,
-    lists: people.filter(p => p.items.length > 0).length,
+    lists: people.filter(p => p.items?.length > 0).length,
     chosen: peopleInState('selected') + peopleInState('bought'),
     purchased: peopleInState('bought'),
+  };
+}
+
+const visitBuckets = ['0', '1', '2–5', '6+'];
+const dayMillis = 86_400_000;
+const dateFromDay = day => new Date(day * dayMillis).toISOString().slice(0, 10);
+export const warsawMetricsDay = now => metricsDay.format(now);
+
+function aggregateMetrics(event) {
+  const { people } = event;
+  const visitCounts = people.map(p => p.metrics?.visits ?? 0);
+  const features = Object.fromEntries(Object.keys(featureLabels)
+    .filter(key => !key.startsWith('food-') || event.food?.enabled || event.metrics?.totals[key])
+    .map(key => [key, [event.metrics?.totals[key] ?? 0, people.filter(p => p.metrics?.used.includes(key)).length]]));
+  return {
+    participants: people.length,
+    ...progressTotals(people),
     features,
-    days: Object.entries(event.metrics?.days ?? {}).sort(([a], [b]) => b.localeCompare(a))
-      .map(([date, { visits, actions }]) => ({ date, visits, actions })),
     distribution: people.length < 5 ? null : [
-      ['0', visitCounts.filter(n => n === 0).length],
-      ['1', visitCounts.filter(n => n === 1).length],
-      ['2–5', visitCounts.filter(n => n >= 2 && n <= 5).length],
-      ['6+', visitCounts.filter(n => n >= 6).length],
+      visitCounts.filter(n => n === 0).length,
+      visitCounts.filter(n => n === 1).length,
+      visitCounts.filter(n => n >= 2 && n <= 5).length,
+      visitCounts.filter(n => n >= 6).length,
     ],
   };
 }
 
+export const metricsSnapshot = (event, now = new Date()) => ({ date: warsawMetricsDay(now), ...aggregateMetrics(event) });
+export const metricsChanged = (previous, next) =>
+  JSON.stringify(previous.metrics?.days) !== JSON.stringify(next.metrics?.days) ||
+  JSON.stringify(aggregateMetrics(previous)) !== JSON.stringify(aggregateMetrics(next));
+
+function activityDays(event) {
+  return Object.entries(event.metrics?.days ?? {}).sort(([a], [b]) => b.localeCompare(a))
+    .map(([date, { visits, actions }]) => ({ date, visits, actions }));
+}
+
+function displayAggregates({ features, distribution, ...counts }) {
+  return {
+    ...counts,
+    features: Object.entries(featureLabels).filter(([key]) => Object.hasOwn(features, key))
+      .map(([key, label]) => ({ label, total: features[key][0], people: features[key][1] })),
+    distribution: counts.participants >= 5 && distribution ? distribution.map((n, i) => [visitBuckets[i], n]) : null,
+  };
+}
+
+export function summarizeMetrics(event) {
+  return { ...displayAggregates(aggregateMetrics(event)), days: activityDays(event) };
+}
+
+export function metricsReport(event, history, now = new Date()) {
+  const today = warsawMetricsDay(now);
+  const through = dateFromDay(calendarDay(today) - 1);
+  const progress = history.filter(({ date }) => validMetricDate(date) && date < today)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const latest = progress.at(-1);
+  if (!latest) return { through };
+  const { date, ...counts } = latest;
+  if (date < through) progress.push({ ...latest, date: through });
+  return { ...displayAggregates(counts), through, progress, days: activityDays(event).filter(row => row.date < today) };
+}
+
 const metricNumber = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
+const progressSeries = [
+  ['entered', 'Weszli na swoje konto', 'Weszli na konto'],
+  ['pins', 'Mają ustawiony PIN', 'Ustawiony PIN'],
+  ['revealed', 'Odkryli wynik losowania', 'Odkryty wynik losowania'],
+  ['lists', 'Mają co najmniej jeden pomysł', 'Co najmniej jeden pomysł'],
+  ['chosen', 'Wiedzą, co dadzą', 'Wybrany prezent'],
+  ['purchased', 'Oznaczyli prezent jako kupiony', 'Kupiony prezent'],
+];
+const activitySeries = [['visits', 'Wejścia'], ['actions', 'Akcje']];
 const metricMeasure = (n, max) => {
   const value = metricNumber(n);
   if (max === undefined) return value;
@@ -79,24 +130,78 @@ const metricsTable = (head, rows, max) => `<table class="metrics-table"><thead><
 ${head.map(label => `<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows.map(([label, ...counts]) =>
   `<tr><th scope="row">${label}</th>${counts.map((n, i) => `<td>${metricMeasure(n, i === 0 ? max : undefined)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 
+const validMetricDate = date => typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date));
+const calendarDay = date => Date.parse(date) / dayMillis;
+const oneDay = '<p class="mt-sm">Na razie są dane tylko z jednego dnia. Linie pojawią się po zakończeniu kolejnego dnia objętego statystykami.</p>';
+
+function metricChart(rows, key, label, max, heading, zeroGaps) {
+  const first = calendarDay(rows[0].date);
+  const span = calendarDay(rows.at(-1).date) - first;
+  const x = day => span ? 48 + (day - first) / span * 268 : 182;
+  const y = n => 92 - n / max * 70;
+  const ticks = max > 1 ? [0, Math.floor(max / 2), max] : [0, max];
+  const dateLabels = span
+    ? [[first, 'start'], ...(span >= 2 ? [[first + Math.round(span / 2), 'middle']] : []), [first + span, 'end']]
+    : [[first, 'middle']];
+  const raw = rows.map(row => [calendarDay(row.date), metricNumber(row[key])]);
+  const points = raw.flatMap(([day, value], index) => {
+    const previous = raw[index - 1]?.[0];
+    if (previous === undefined || day - previous <= 1) return [[day, value]];
+    if (!zeroGaps) return [[day - 1, raw[index - 1][1]], [day, value]];
+    return day - previous === 2 ? [[day - 1, 0], [day, value]] : [[previous + 1, 0], [day - 1, 0], [day, value]];
+  });
+  return `<div class="metric-chart metric-trend-${key}">
+<${heading}>${label}: ${raw.at(-1)[1]}</${heading}>
+<svg aria-hidden="true" focusable="false" viewBox="0 0 332 125">
+${ticks.map(n => `<path class="metric-gridline" d="M48 ${y(n)}H316"/><text x="42" y="${y(n) + 5}" text-anchor="end">${n}</text>`).join('')}
+${dateLabels.map(([day, anchor]) => {
+    const [, month, date] = new Date(day * 86_400_000).toISOString().slice(0, 10).split('-');
+    return `<text x="${x(day)}" y="118" text-anchor="${anchor}">${date}.${month}</text>`;
+  }).join('')}
+${points.length > 1 ? `<polyline points="${points.map(([day, value]) => `${x(day).toFixed(2)},${y(value).toFixed(2)}`).join(' ')}"/>` : ''}
+${(raw.length <= 24 ? raw : []).map(([day, value]) => `<circle cx="${x(day).toFixed(2)}" cy="${y(value).toFixed(2)}" r="3"/>`).join('')}
+</svg>
+</div>`;
+}
+
+function progressTimeline(rows) {
+  if (!rows.length) return '';
+  const series = progressSeries.map(([key, , label]) => [key, label]);
+  const max = rows.reduce((highest, { participants }) => Math.max(highest, metricNumber(participants)), 1);
+  return `<section class="section-gap" aria-labelledby="metrics-progress-history"><h2 id="metrics-progress-history">Postępy w czasie</h2>
+<p class="mt-sm">Wykresy pokazują liczbę osób na koniec dnia, a liczba przy tytule dotyczy ostatniego dnia. Wcześniejszych wyników nie odtwarzamy. W dniach bez zmian obowiązuje ostatni zapis.</p>
+${rows.length === 1 ? oneDay : ''}
+<div class="metric-charts metric-progress-trend">${series.map(([key, label]) => metricChart(rows, key, label, max, 'h3')).join('')}</div>
+<details class="mt-sm"><summary>Dokładne liczby według dni</summary>
+${rows.slice().reverse().map(row => `<h3 class="mt-sm"><time datetime="${row.date}">${row.date}</time></h3>
+${metricsFacts(series.map(([key, label]) => [label, row[key]]))}`).join('')}</details></section>`;
+}
+
 export function metricsContent(summary) {
-  const { participants, entered, pins, revealed, lists, chosen, purchased, features, days, distribution } = summary;
-  const dailyRows = days.filter(({ date }) => /^\d{4}-\d{2}-\d{2}$/.test(date))
-    .map(({ date, visits, actions }) => [date, visits, actions]);
+  const { participants, features, days, distribution, progress = [], through } = summary;
+  const note = through ? `<p class="notice mt-sm">Stan na koniec wczorajszego dnia (<time datetime="${through}">${through.slice(8)}.${through.slice(5, 7)}</time>). Dzisiejsze dane pojawią się po północy czasu polskiego.</p>` : '';
+  if (!days) return '<p class="notice mt-sm">Statystyki pojawią się po zakończeniu pierwszego dnia zbierania danych, o północy czasu polskiego.</p>';
+  const validDays = days.filter(({ date }) => validMetricDate(date));
+  const activity = validDays.slice().reverse();
+  if (activity.length && through > activity.at(-1).date) activity.push({ date: through, visits: 0, actions: 0 });
+  const dailyRows = validDays.map(({ date, visits, actions }) => [date, visits, actions]);
   const mostVisits = dailyRows.reduce((max, [, visits]) => Math.max(max, metricNumber(visits)), 0);
-  return `<section class="section-gap" aria-labelledby="metrics-progress"><h2 id="metrics-progress">Postępy</h2>
+  const activityMax = validDays.reduce((max, { visits, actions }) => Math.max(max, metricNumber(visits), metricNumber(actions)), 1);
+  return `${note}<section class="section-gap" aria-labelledby="metrics-progress"><h2 id="metrics-progress">Postępy</h2>
 <p class="mt-sm">Pełny pasek oznacza wszystkich uczestników.</p>
-${metricsFacts([['Uczestnicy', participants], ['Weszli na swoje konto', entered, participants],
-    ['Mają ustawiony PIN', pins, participants], ['Odkryli wynik losowania', revealed, participants],
-    ['Mają co najmniej jeden pomysł', lists, participants], ['Wiedzą, co dadzą', chosen, participants],
-    ['Oznaczyli prezent jako kupiony', purchased, participants]])}</section>
+${metricsFacts([['Uczestnicy', participants], ...progressSeries.map(([key, label]) => [label, summary[key], participants])])}</section>
+${progressTimeline(progress)}
 <section class="section-gap" aria-labelledby="metrics-visits"><h2 id="metrics-visits">Wejścia na konto</h2>
 <p class="mt-sm">Wejście liczy się po poprawnym PIN-ie lub po otwarciu wspólnego linku na zapamiętanym urządzeniu.</p>
 ${distribution ? metricsTable(['Liczba wejść', 'Osoby'], distribution, participants) :
     '<p class="notice mt-sm">Podział wejść jest widoczny od 5 uczestników.</p>'}</section>
 <section class="section-gap" aria-labelledby="metrics-daily"><h2 id="metrics-daily">Aktywność według dni</h2>
 ${dailyRows.length ? '<p class="mt-sm">Pełny pasek oznacza dzień z największą liczbą wejść.</p>' +
-    metricsTable(['Dzień', 'Wejścia', 'Akcje'], dailyRows, mostVisits) : '<p class="mt-sm">Nie odnotowano jeszcze aktywności.</p>'}</section>
+    metricsTable(['Dzień', 'Wejścia', 'Akcje'], dailyRows, mostVisits) +
+    '<h3 class="mt">Aktywność w czasie</h3><p class="mt-sm">Liczba przy tytule dotyczy ostatniego dnia.</p>' + (activity.length === 1 ? oneDay :
+      '<p class="mt-sm">Brak dnia w tabeli oznacza 0 wejść i 0 akcji.</p>') +
+    `<div class="metric-charts metric-activity-trend">${activitySeries.map(([key, label]) => metricChart(activity, key, label, activityMax, 'h4', true)).join('')}</div>` :
+    '<p class="mt-sm">Nie odnotowano jeszcze aktywności.</p>'}</section>
 <section class="section-gap" aria-labelledby="metrics-features"><h2 id="metrics-features">Użycie funkcji</h2>
 <p class="mt-sm">„Osoby” to liczba obecnych uczestników, którzy użyli danej funkcji.</p>
 ${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, people }) => [label, total, people]))}</section>`;
@@ -400,6 +505,10 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       check(false);
   }
   recordMetric(next, me, action, fields, now);
+  if (metricsChanged(state, next)) {
+    const snapshot = metricsSnapshot(next, now);
+    (next.snapshots ??= {})[snapshot.date] = snapshot;
+  }
   return next;
 }
 
@@ -482,8 +591,8 @@ function startPreview(data) {
     const initial = report.innerHTML;
     const renderMetrics = () => {
       try {
-        const state = storage().read();
-        report.innerHTML = state ? metricsContent(summarizeMetrics(state)) : initial;
+        const state = storage().read() ?? data.timeline;
+        report.innerHTML = metricsContent(metricsReport(state, Object.values(state.snapshots ?? {})));
       } catch {
         banner.append(' Nie można odczytać próbnych zmian.');
       }

@@ -55,6 +55,15 @@ svg{vertical-align:middle;flex-shrink:0}
 .metrics-table th:first-child{text-align:left;overflow-wrap:anywhere}
 .metrics-table tbody th{font-weight:400}
 .metrics-table td:has(.metric-measure){width:46%;vertical-align:middle}
+.metric-charts{display:grid;gap:12px;margin-top:12px}
+.metric-chart{border:1px solid var(--line);border-radius:10px;padding:10px}
+.metric-chart h3,.metric-chart h4{margin:0;font-size:1.125rem}
+.metric-chart>svg{display:block;width:100%;max-width:420px;margin-top:4px;overflow:visible}
+.metric-chart text{fill:var(--ink);font-size:17px}
+.metric-gridline{stroke:var(--control-line);stroke-width:1}
+.metric-chart polyline{fill:none;stroke:var(--green);stroke-width:3;stroke-linejoin:round}
+.metric-chart circle{fill:var(--green);stroke:var(--surface);stroke-width:1}
+[aria-labelledby="metrics-progress-history"] summary{cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .stack{display:grid;gap:15px}
 .row{display:flex;align-items:center;gap:12px}
 .spread{justify-content:space-between}
