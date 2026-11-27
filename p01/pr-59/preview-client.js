@@ -330,6 +330,46 @@ export function watchIdeaEditWindows(root) {
   return () => timers.forEach(clearTimeout);
 }
 
+export function measureBars() {
+  const nav = document.querySelector('.nav');
+  nav?.classList.add('measured');
+  const bars = [['--topbar-height', document.querySelector('.topbar')],
+    ['--bottom-bar-height', nav || document.querySelector('.ack-bar')]].filter(([, bar]) => bar);
+  const update = () => {
+    for (const [property, bar] of bars) document.documentElement.style.setProperty(property, bar.offsetHeight + 'px');
+  };
+  update();
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(update);
+    for (const [, bar] of bars) observer.observe(bar, { box: 'border-box' });
+  } else {
+    window.addEventListener('resize', update);
+  }
+}
+
+export function showResult(result, snackbar, announcement) {
+  snackbar.setAttribute('aria-hidden', 'true');
+  const { top, height } = snackbar.getBoundingClientRect();
+  const headerBottom = document.querySelector('.topbar')?.getBoundingClientRect().bottom ?? 0;
+  const gap = parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.75;
+  document.documentElement.style.setProperty('--snackbar-height', height + 'px');
+  result.tabIndex = -1;
+  result.setAttribute('data-action-focus', '');
+  result.focus({ preventScroll: true });
+  const bounds = result.getBoundingClientRect();
+  const start = headerBottom + gap;
+  const end = top - gap;
+  if (bounds.height > end - start || bounds.top < start) {
+    window.scrollBy(0, bounds.top - start);
+  } else if (bounds.bottom > end) {
+    window.scrollBy(0, bounds.bottom - end);
+  }
+  announcement.textContent = '';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (snackbar.isConnected) announcement.textContent = snackbar.textContent;
+  }));
+}
+
 
 const storagePrefix = 'upominki-preview:';
 const warsawDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short' });
@@ -689,7 +729,19 @@ function startPreview(data) {
       }
     });
   }
-  const apply = (action, fields, message, target, { afterReplies = false } = {}) => {
+  const announcement = node('p', 'sr-only');
+  if (screen) {
+    measureBars();
+    announcement.setAttribute('role', 'status');
+    announcement.dataset.snackbarAnnouncement = '';
+    screen.after(announcement);
+  }
+  const clearSnackbar = () => {
+    screen.querySelector('.snackbar')?.remove();
+    announcement.textContent = '';
+  };
+  const apply = (action, fields, message, target, after) => {
+    clearSnackbar();
     const id = commit(action, fields);
     if (currentForm) {
       screen.hidden = false;
@@ -697,15 +749,19 @@ function startPreview(data) {
       currentForm = undefined;
     }
     render();
-    const result = status(message);
     const targetId = typeof target === 'function' ? target(id) : target;
-    const container = targetId && document.getElementById(targetId) || screen;
-    const anchor = afterReplies && container.querySelector('.reply-box');
-    if (anchor) anchor.before(result);
-    else container.prepend(result);
-    result.focus();
-    result.scrollIntoView({ block: 'nearest' });
-    return result;
+    const result = document.getElementById(targetId);
+    after?.(result);
+    if (message) {
+      const snackbar = node('p', 'snackbar', node('span', '', '✓'), ' ',
+        node('span', '', typeof message === 'function' ? message(id) : message));
+      screen.prepend(snackbar);
+      showResult(result, snackbar, announcement);
+    } else {
+      result.tabIndex = -1;
+      result.focus({ preventScroll: true });
+      result.scrollIntoView({ block: 'nearest' });
+    }
   };
   function openForm(title, fields, label, action, fixed, message, target, intro, extra, after, returnFocus) {
     const back = button('Wróć', () => {
@@ -716,10 +772,9 @@ function startPreview(data) {
     }, 'quiet');
     const heading = node('h1', '', title);
     heading.tabIndex = -1;
-    currentForm = node('div', '', back, heading, typeof intro === 'string' ? node('p', 'lead', intro) : intro, form(label, fields, values => {
-      const result = apply(action, { ...values, ...fixed }, message, target);
-      after?.(result);
-    }, extra));
+    clearSnackbar();
+    currentForm = node('div', '', back, heading, typeof intro === 'string' ? node('p', 'lead', intro) : intro,
+      form(label, fields, values => apply(action, { ...values, ...fixed }, message, target, after), extra));
     screen.hidden = true;
     screen.after(currentForm);
     heading.focus();
@@ -736,7 +791,7 @@ function startPreview(data) {
     ];
     openForm(title, fields, suggestion ? 'Wyślij propozycję' : edit ? 'Zapisz zmiany' : 'Dodaj', action,
       { item: item.id }, suggestion ? 'Wysłano propozycję.' : edit ? 'Zapisano zmiany.' : 'Dodano pomysł do listy.',
-      suggestion ? 'suggestions' : edit ? 'item-' + item.id : null,
+      suggestion ? 'suggestions' : id => 'item-' + (edit ? item.id : id),
       suggestion ? 'Zapytamy anonimowo, czy tej osobie podoba się Twój pomysł.' :
         node('div', '', node('p', 'lead', 'Osoba, która daje Ci prezent, zobaczy ten pomysł.'),
           !edit && node('p', 'mt-sm', ideaEditHint)), null,
@@ -745,7 +800,7 @@ function startPreview(data) {
         if (!href) return;
         const view = node('a', 'btn secondary mt-sm', 'Zobacz, co widzi odbiorca');
         view.href = href + '#received-suggestion-' + recipient().suggestions.at(-1).id;
-        result.after(view);
+        result.firstElementChild.after(view);
       } : null, returnFocus);
   }
   function discuss(action, item, thread) {
@@ -788,7 +843,7 @@ function startPreview(data) {
     };
     const controls = ownActions ? [
       editable && editState(node('div', 'gift-actions', button('Edytuj', () => ideaForm('edit', item)),
-        button('Usuń', () => openForm('Usunąć ten pomysł?', [], 'Tak, usuń', 'delete', { item: item.id }, 'Usunięto pomysł z listy.', null, item.title), 'danger-outline')), true),
+        button('Usuń', () => openForm('Usunąć ten pomysł?', [], 'Tak, usuń', 'delete', { item: item.id }, 'Usunięto pomysł z listy.', 'list-result', item.title), 'danger-outline')), true),
       editState(node('div', 'gift-actions', lockedButton('Edytuj', ''), lockedButton('Usuń', 'danger-outline')), false),
     ] : !owner && writable ? [node('div', 'gift-actions', button('Zapytaj anonimowo', () => discuss('question', item)))] : [];
     const discussion = item.threads.map(thread => {
@@ -819,7 +874,10 @@ function startPreview(data) {
     const entries = owner ? pending(person) : person.suggestions;
     const section = node('section', 'section-gap', node('h2', '', owner ? 'Propozycje od osoby, która daje Ci prezent' : 'Twoje propozycje'));
     section.id = owner ? 'received-suggestions' : 'suggestions';
-    if (owner) section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
+    if (owner) {
+      section.firstElementChild.id = 'suggestion-result';
+      section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
+    }
     else if (maySuggest(person)) section.append(node('div', 'mt-sm', button('Zaproponuj pomysł', () => ideaForm('suggest'))));
     else if (person.state === 'open') section.append(node('div', 'notice mt-sm',
       node('h3', '', 'Ta osoba nie przyjmuje teraz propozycji.'), node('p', '', 'Oczekujące propozycje usunięto.')));
@@ -840,7 +898,7 @@ function startPreview(data) {
           return button(label, () => openForm(accept ? 'Podoba Ci się ten pomysł?' : 'Odrzucić propozycję?',
             [field('comment', 'Krótki komentarz (opcjonalnie)', { multiline: true, max: 500 })], label, 'decide',
             { suggestion: entry.id, decision }, accept ? 'Dodano propozycję do listy.' : 'Odrzucono propozycję.',
-            id => accept ? 'item-' + id : pending(me()).length ? 'received-suggestions' : 'suggestion-result',
+            id => accept ? 'item-' + id : 'suggestion-result',
             entry.title, accept ? node('p', 'notice', 'Pomysł trafi na Twoją listę. To nie znaczy, że dostaniesz właśnie ten prezent.') : null));
         })));
       }
@@ -851,6 +909,7 @@ function startPreview(data) {
   function list() {
     const person = me(), open = person.state === 'open';
     const title = node('h1', '', data.title);
+    title.id = 'list-result';
     const intro = node('p', 'lead', 'Podpowiedz, co chcesz dostać.');
     const stateNote = open ? (person.unlocked ? 'Twoja lista jest znowu odblokowana.' : '') :
       person.state === 'selected' ? 'Twoja lista jest zablokowana. Nadal możesz odpowiadać na pytania.' :
@@ -869,25 +928,26 @@ function startPreview(data) {
     const preferences = form('Zapisz ustawienie', [], fields => {
       const count = pending(person).length;
       if (fields.mode === 'none' && count) {
+        const removalNotice = 'Usunięto te, które czekały na odpowiedź.';
         openForm('Przestać przyjmować propozycje?', [], 'Tak, nie przyjmuję propozycji', 'mode', fields,
-          'Nie przyjmujesz propozycji. Usunięto te, które czekały na odpowiedź.', 'suggestion-settings-result',
-          `Propozycje czekające na odpowiedź: ${count}. Zostaną usunięte bez odpowiedzi.`, null, null, preferences.querySelector('button'));
+          'Nie przyjmujesz propozycji. ' + removalNotice, 'suggestion-settings-result',
+          `Propozycje czekające na odpowiedź: ${count}. Zostaną usunięte bez odpowiedzi.`, null,
+          result => result.after(node('p', 'notice', removalNotice)), preferences.querySelector('button'));
       } else apply('mode', fields, fields.mode === 'none' ? 'Nie przyjmujesz propozycji.' : 'Zapisano ustawienie propozycji.', 'suggestion-settings-result');
     }, settings);
     preferences.classList.add('preference');
     preferences.querySelector('button').classList.add('secondary');
-    const modeResult = node('div');
+    const modeResult = node('details', 'disclosure',
+      node('summary', '', question + (savedMode === 'none' ? ' Nie' : ' Tak')), preferences);
     modeResult.id = 'suggestion-settings-result';
-    const optionPanel = node('section', '', node('details', 'disclosure',
-      node('summary', '', question + (savedMode === 'none' ? ' Nie' : ' Tak')), preferences), modeResult);
+    const optionPanel = node('section', '', modeResult);
     optionPanel.id = 'suggestion-settings';
-    const suggestionResult = node('div');
-    suggestionResult.id = 'suggestion-result';
     const addIdea = open && node('div', 'mt', button('Dodaj pomysł', event => ideaForm('add', {}, event.currentTarget)));
+    if (addIdea && !pending(person).length) addIdea.id = 'suggestion-result';
     return [title, intro, stateNote && node('p', 'notice mt', stateNote),
       open && person.items.length < 2 && node('p', 'mt-sm', 'Dodaj 2 lub 3 pomysły, wtedy trudniej zgadnąć, co dostaniesz.'),
       cards(person, true, 'Twoja lista jest pusta. Jeśli chcesz, dodaj pierwszy pomysł.'), !person.items.length && addIdea,
-      open && (pending(person).length ? suggestions(person, true) : suggestionResult),
+      open && pending(person).length && suggestions(person, true),
       person.items.length > 0 && addIdea, open && optionPanel];
   }
   function draw() {
@@ -906,11 +966,11 @@ function startPreview(data) {
     }, style);
     if (person.state === 'open') choice.append(node('h2', '', 'Wiesz już, co dasz?'),
       node('p', '', 'Gdy wiesz, co dasz, dotknij „Wiem, co dam”. Lista zostanie zablokowana, a propozycje zamknięte. Możesz ją później odblokować. Nie zapisujemy, co wybierasz.'),
-      node('div', 'mt-sm', change('choice', 'Wiem, co dam', 'Lista zablokowana.')));
+      node('div', 'mt-sm', change('choice', 'Wiem, co dam', null)));
     else if (person.state === 'selected') choice.append(node('h2', '', 'Wiesz, co dasz'), node('p', '', 'Gotowe. Możesz zamknąć aplikację.'),
       node('div', 'stack mt-sm', change('unlock', 'Zmieniam zdanie, odblokuj listę', 'Lista odblokowana.', 'quiet'),
         button('Oznacz prezent jako kupiony', () => openForm('Oznaczyć prezent jako kupiony?', [], 'Tak, prezent jest kupiony',
-          'purchase', {}, 'Prezent, który dasz, jest już kupiony.', 'choice',
+          'purchase', {}, null, 'choice',
           'To opcjonalne. Tego nie da się cofnąć. Lista i pytania zamkną się dla Was obojga.'))));
     else choice.append(node('h2', '', 'Prezent, który dasz, jest już kupiony.'), node('p', '', 'Teraz czekamy na święta.'));
     return [title, person.state === 'open' && node('p', 'lead', 'Lista to podpowiedzi. Możesz też dać coś spoza listy.'),
@@ -931,7 +991,7 @@ function startPreview(data) {
       if (!dish.organizerProvided && (mine || !name)) row.append(node('div', 'food-action', button(mine ? 'Zrezygnuj' : 'Zrobię to', () => {
         try {
           apply(mine ? 'food-release' : 'food-claim', { item: dish.id },
-            mine ? 'Zrezygnowano — pozycja jest znowu wolna.' : 'Zapisano: bierzesz tę pozycję.', article.id);
+            mine ? `Znów wolne: ${dish.title}.` : `Zarezerwowano: ${dish.title}.`, article.id);
         } catch (error) {
           row.after(status(error.message));
         }
@@ -940,7 +1000,8 @@ function startPreview(data) {
     });
     list.append(node('div', 'stack mt-sm', ...dishes));
     if (food.allowProposals) list.append(form('Dodaj pozycję', [field('title', 'Dodaj nową pozycję do listy', { max: 140, required: true })],
-      values => apply('food-add', values, 'Dodano pozycję do listy.', 'food-list')));
+      values => apply('food-add', values, id => `Dodano danie: ${state.food.items.find(dish => dish.id === id).title}.`,
+        id => 'food-item-' + id)));
     const sort = node('div', 'sort-toggle', ...[false, true].map(asc => {
       const btn = node('button', 'sort-link' + (oldest === asc ? ' active' : ''), asc ? 'Od najstarszych' : 'Od najnowszych');
       btn.type = 'button';
@@ -993,7 +1054,7 @@ function startPreview(data) {
     };
     const entries = oldest ? food.feed : food.feed.toReversed();
     feed.append(composer('composer mt-sm', 'comment-text', 'Dodaj komentarz', 'Komentarz…', 'composer-btn',
-      values => apply('food-comment', values, 'Dodano komentarz.', 'food-feed')), node('div', 'feed-list mt', ...entries.map(entry => {
+      values => apply('food-comment', values, 'Dodano komentarz.', id => 'food-entry-' + id)), node('div', 'feed-list mt', ...entries.map(entry => {
       const copy = eventCopy[entry.kind];
       const article = node('article', 'feed-entry ' + (copy ? 'feed-event-row' : 'feed-comment'));
       article.id = 'food-entry-' + entry.id;
@@ -1004,7 +1065,7 @@ function startPreview(data) {
         })) : null;
       const replyBox = entry.replyOnly ? null : node('details', 'reply-box', node('summary', 'reply-toggle', node('span', '', 'Odpowiedz')),
         composer('reply-form', 'reply-' + entry.id, 'Odpowiedź', 'Odpowiedź…', 'secondary composer-btn',
-          values => apply('food-reply', { ...values, entry: entry.id }, 'Dodano odpowiedź.', article.id, { afterReplies: true }), true));
+          values => apply('food-reply', { ...values, entry: entry.id }, 'Dodano odpowiedź.', article.id), true));
       if (copy) {
         const line = node('div', 'feed-event-line', node('p', 'feed-event', node('strong', '', entry.authorName || 'Organizator'),
           ' ' + copy[0] + ' ', node('strong', '', entry.itemTitle), copy[1]));
@@ -1031,6 +1092,7 @@ function startPreview(data) {
       screen.replaceChildren(...[hint, ...view()].filter(Boolean));
       stopEditTimers = watchIdeaEditWindows(screen);
     }
+    announcement.textContent = '';
     badge('list', unreadList(me()).length);
     badge('recipient', unreadGiver(recipient()).length);
     badge('food', unreadFood(state.food, me()).length);
