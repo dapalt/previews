@@ -110,6 +110,7 @@ const warsawDateTime = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Wars
 export function previewStore(storage, scope, initial) {
   const key = storagePrefix + scope;
   return {
+    key,
     read: () => JSON.parse(storage.getItem(key) ?? 'null') ?? structuredClone(initial),
     write: state => storage.setItem(key, JSON.stringify(state)),
     reset: () => storage.removeItem(key),
@@ -644,7 +645,7 @@ function startPreview(data) {
     const person = recipient();
     const title = node('h1', 'recipient-title', node('span', 'task', 'Robisz prezent dla:'), node('span', 'recipient-name', person.name));
     const section = node('section', 'section-gap', node('h2', 'list-heading', 'Lista pomysłów'),
-      cards(person, false, 'Nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.'));
+      cards(person, false, `${person.name} nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.`));
     const choice = node('section', 'choice-panel section-gap');
     choice.id = 'choice';
     const change = (action, label, message, style) => button(label, event => {
@@ -792,6 +793,18 @@ function startPreview(data) {
     }
   }
   openUnread();
+  if (state.food?.enabled && data.view !== 'food') {
+    const local = storage();
+    window.addEventListener('storage', event => {
+      if (event.storageArea !== localStorage || (event.key !== local.key && event.key !== null)) return;
+      try {
+        const latest = local.read();
+        badge('food', unreadFood(latest.food, latest.people.find(person => person.id === data.actor)).length);
+      } catch {
+        // Keep the current badge if preview storage cannot be read.
+      }
+    });
+  }
   window.addEventListener('pageshow', event => {
     if (!event.persisted) return;
     try {
