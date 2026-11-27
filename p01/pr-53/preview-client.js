@@ -198,6 +198,33 @@ export function keepEditingFieldVisible() {
   schedule();
 }
 
+const ideaEditMinutes = 5;
+const ideaEditWindow = ideaEditMinutes * 60_000;
+const ideaDayFormatter = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+export const ideaEditHint = `Możesz zmienić lub usunąć pomysł przez ${ideaEditMinutes} minut od dodania.`;
+export const ideaEditExpired = `Minęło ${ideaEditMinutes} minut od dodania, więc tego pomysłu nie możesz już zmienić ani usunąć.`;
+
+const preciseIdeaTime = createdAt => createdAt?.[10] === 'T' ? Date.parse(createdAt) : NaN;
+export const ideaEditDeadline = createdAt => preciseIdeaTime(createdAt) + ideaEditWindow;
+export function ideaCreationDay(createdAt) {
+  const instant = preciseIdeaTime(createdAt);
+  return Number.isFinite(instant) ? ideaDayFormatter.format(instant) : createdAt?.slice(0, 10);
+}
+
+export function watchIdeaEditWindows(root) {
+  const timers = Array.from(root.querySelectorAll('[data-idea-edit-remaining]'), card => {
+    const expire = () => {
+      for (const el of card.querySelectorAll('[data-idea-edit-open]')) el.hidden = true;
+      for (const el of card.querySelectorAll('[data-idea-edit-locked]')) el.hidden = false;
+    };
+    return setTimeout(expire, Number(card.dataset.ideaEditRemaining));
+  });
+  return () => timers.forEach(clearTimeout);
+}
+
 
 const storagePrefix = 'upominki-preview:';
 const warsawDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short' });
@@ -256,7 +283,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
   const recipient = next.people.find(person => person.id === me.recipient);
   const day = warsawDate.format(now);
   const ownItem = () => me.items.find(item => item.id === fields.item);
-  const newIdea = input => ({ ...idea(input), id, createdAt: day, threads: [] });
+  const newIdea = input => ({ ...idea(input), id, createdAt: now.toISOString(), threads: [] });
   switch (action) {
     case 'visit':
       me.practicePinSet = true;
@@ -279,31 +306,28 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       me.items.push(newIdea(fields));
       break;
     case 'edit':
-      check(me.state === 'open' && ownItem());
-      Object.assign(ownItem(), idea(fields));
+    case 'delete': {
+      const item = ownItem();
+      check(me.state === 'open' && item);
+      check(ideaEditDeadline(item.createdAt) > now.getTime(), ideaEditExpired);
+      if (action === 'edit') Object.assign(item, idea(fields));
+      else me.items = me.items.filter(entry => entry !== item);
       break;
-    case 'delete':
-      check(me.state === 'open' && ownItem());
-      me.items = me.items.filter(item => item.id !== fields.item);
-      break;
+    }
     case 'question': {
       const item = recipient?.items.find(item => item.id === fields.item);
       check(item && recipient.state !== 'bought');
       item.threads.push({ id, kind: 'question', question: text(fields.text, 700), createdAt: day, answers: [], unreadByOwner: true });
       break;
     }
-    case 'reply':
-    case 'note': {
+    case 'reply': {
       const item = ownItem();
       check(item && me.state !== 'bought');
       const entry = { answer: value(fields.text, 1200), link: link(fields.link), createdAt: day };
-      check(entry.answer || entry.link, 'Dodaj odpowiedź, komentarz lub link.');
-      if (action === 'note') item.threads.push({ id, kind: 'note', ...entry });
-      else {
-        const thread = item.threads.find(thread => thread.id === fields.thread && thread.kind === 'question');
-        check(thread);
-        thread.answers.push({ ...entry, id, unreadByGiver: true });
-      }
+      check(entry.answer || entry.link, 'Dodaj odpowiedź lub link.');
+      const thread = item.threads.find(thread => thread.id === fields.thread && thread.kind === 'question');
+      check(thread);
+      thread.answers.push({ ...entry, id, unreadByGiver: true });
       break;
     }
     case 'read':
@@ -318,7 +342,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       break;
     case 'suggest':
       check(maySuggest(recipient));
-      recipient.suggestions.push({ ...newIdea(fields), status: 'pending', unreadByOwner: true });
+      recipient.suggestions.push({ ...newIdea(fields), createdAt: day, status: 'pending', unreadByOwner: true });
       break;
     case 'decide': {
       const suggestion = me.suggestions.find(suggestion => suggestion.id === fields.suggestion);
@@ -405,7 +429,7 @@ const date = day => day ? node('time', 'entry-date tiny', day.slice(0, 10)) : nu
 const ref = url => url ? node('p', 'small muted', url) : null;
 const presentIdea = item => node('div', 'gift-main',
   node('span', 'gift-title', item.title), item.description && node('span', 'gift-desc multiline', item.description),
-  item.price && node('span', 'gift-price', item.price), date(item.createdAt));
+  item.price && node('span', 'gift-price', item.price), date(ideaCreationDay(item.createdAt)));
 const field = (name, label, { max = 1200, initial = '', multiline = false, required = false, type = 'text' } = {}) => {
   const input = node(multiline ? 'textarea' : 'input');
   if (!multiline) input.type = type;
@@ -624,7 +648,9 @@ function startPreview(data) {
     openForm(title, fields, suggestion ? 'Wyślij propozycję' : edit ? 'Zapisz zmiany' : 'Dodaj', action,
       { item: item.id }, suggestion ? 'Wysłano propozycję.' : edit ? 'Zapisano zmiany.' : 'Dodano pomysł do listy.',
       suggestion ? 'suggestions' : edit ? 'item-' + item.id : null,
-      suggestion ? 'Zapytamy anonimowo, czy tej osobie podoba się Twój pomysł.' : 'Osoba, która daje Ci prezent, zobaczy ten pomysł.', null,
+      suggestion ? 'Zapytamy anonimowo, czy tej osobie podoba się Twój pomysł.' :
+        node('div', '', node('p', 'lead', 'Osoba, która daje Ci prezent, zobaczy ten pomysł.'),
+          !edit && node('p', 'mt-sm', ideaEditHint)), null,
       suggestion ? result => {
         const href = data.recipientList;
         if (!href) return;
@@ -634,9 +660,9 @@ function startPreview(data) {
       } : null, returnFocus);
   }
   function discuss(action, item, thread) {
-    const question = action === 'question', reply = action === 'reply';
-    const append = reply && thread.answers.length > 0;
-    const input = field('text', question ? 'Treść pytania' : reply ? 'Odpowiedź' : 'Komentarz', {
+    const question = action === 'question';
+    const append = !question && thread.answers.length > 0;
+    const input = field('text', question ? 'Treść pytania' : 'Odpowiedź', {
       multiline: true, required: question, max: question ? 700 : 1200,
     });
     const replyFields = question ? [] : [field('link', 'Link (opcjonalnie)', { max: 2048, type: 'url' })];
@@ -646,23 +672,36 @@ function startPreview(data) {
     }, 'secondary'))) : null;
     const context = node('div', '', node('p', 'lead multiline', 'Pomysł: ', node('strong', '', item.title)),
       question ? node('p', '', recipient().name + ' nie zobaczy, kto pyta.')
-        : reply ? node('p', 'multiline', 'Pytanie: ', thread.question)
-          : node('p', '', 'To komentarz do pomysłu, nie odpowiedź na pytanie. Zobaczy go osoba, która daje Ci prezent.'),
+        : node('p', 'multiline', 'Pytanie: ', thread.question),
       ...(append ? thread.answers.map(answer => node('div', 'answer', node('strong', '', 'Wcześniejsza odpowiedź:'),
         node('p', 'multiline', answer.answer), ref(answer.link), date(answer.createdAt))) : []));
-    openForm(question ? 'O co chcesz dopytać?' : append ? 'Dopisz odpowiedź' : reply ? 'Twoja odpowiedź' : 'Skomentuj', [input, ...replyFields],
-      question ? 'Wyślij anonimowo' : append ? 'Dopisz odpowiedź' : reply ? 'Wyślij odpowiedź' : 'Zapisz komentarz', action,
-      { item: item.id, thread: thread?.id }, question ? 'Wysłano pytanie.' : reply ? 'Zapisano odpowiedź.' : 'Zapisano komentarz.',
+    openForm(question ? 'O co chcesz dopytać?' : append ? 'Dopisz odpowiedź' : 'Twoja odpowiedź', [input, ...replyFields],
+      question ? 'Wyślij anonimowo' : append ? 'Dopisz odpowiedź' : 'Wyślij odpowiedź', action,
+      { item: item.id, thread: thread?.id }, question ? 'Wysłano pytanie.' : 'Zapisano odpowiedź.',
       'item-' + item.id, context, presets);
   }
   function gift(item, owner, person) {
     const open = person.state === 'open', writable = person.state !== 'bought';
-    const controls = [
-      owner && open && button('Edytuj', () => ideaForm('edit', item)),
-      owner && open && button('Usuń', () => openForm('Usunąć ten pomysł?', [], 'Tak, usuń', 'delete', { item: item.id }, 'Usunięto pomysł z listy.', null, item.title), 'danger-outline'),
-      owner && writable && button('Skomentuj', () => discuss('note', item), 'quiet'),
-      !owner && writable && button('Zapytaj anonimowo', () => discuss('question', item)),
-    ].filter(Boolean);
+    const ownActions = owner && open;
+    const remaining = ownActions ? ideaEditDeadline(item.createdAt) - Date.now() : 0;
+    const editable = remaining > 0;
+    const editState = (element, isOpen) => {
+      element.setAttribute(isOpen ? 'data-idea-edit-open' : 'data-idea-edit-locked', '');
+      element.hidden = isOpen !== editable;
+      return element;
+    };
+    const lockedButton = (label, style) => {
+      const control = node('button', 'btn ' + style, label);
+      control.type = 'button';
+      control.disabled = true;
+      control.title = ideaEditExpired;
+      return control;
+    };
+    const controls = ownActions ? [
+      editable && editState(node('div', 'gift-actions', button('Edytuj', () => ideaForm('edit', item)),
+        button('Usuń', () => openForm('Usunąć ten pomysł?', [], 'Tak, usuń', 'delete', { item: item.id }, 'Usunięto pomysł z listy.', null, item.title), 'danger-outline')), true),
+      editState(node('div', 'gift-actions', lockedButton('Edytuj', ''), lockedButton('Usuń', 'danger-outline')), false),
+    ] : !owner && writable ? [node('div', 'gift-actions', button('Zapytaj anonimowo', () => discuss('question', item)))] : [];
     const discussion = item.threads.map(thread => {
       if (thread.kind === 'note') return node('div', 'item-note', node('strong', '', 'Komentarz'),
         node('p', 'multiline', thread.answer), ref(thread.link), date(thread.createdAt));
@@ -678,8 +717,10 @@ function startPreview(data) {
           () => discuss('reply', item, thread))) : null);
       return owner ? mark(question, thread.id, question.firstElementChild) : question;
     });
-    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), ...discussion),
-      controls.length ? node('div', 'gift-actions', ...controls) : null);
+    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), ...discussion,
+      editable && editState(node('p', 'mt-sm', ideaEditHint), true),
+      ownActions && editState(node('p', 'mt-sm', ideaEditExpired), false)), ...controls);
+    if (editable) card.dataset.ideaEditRemaining = remaining;
     card.id = 'item-' + item.id;
     return card;
   }
@@ -723,7 +764,7 @@ function startPreview(data) {
     const title = node('h1', '', data.title);
     const intro = node('p', 'lead', 'Podpowiedz, co chcesz dostać.');
     const stateNote = open ? (person.unlocked ? 'Twoja lista jest znowu odblokowana.' : '') :
-      person.state === 'selected' ? 'Twoja lista jest zablokowana. Nadal możesz odpowiadać na pytania i dodawać komentarze.' :
+      person.state === 'selected' ? 'Twoja lista jest zablokowana. Nadal możesz odpowiadać na pytania.' :
         'Prezent dla Ciebie jest już kupiony. Teraz czekamy na święta.';
     const question = 'Czy przyjmujesz propozycje prezentów?';
     const savedMode = person.mode === 'none' ? 'none' : 'unlimited';
@@ -781,7 +822,7 @@ function startPreview(data) {
       node('div', 'stack mt-sm', change('unlock', 'Zmieniam zdanie, odblokuj listę', 'Lista odblokowana.', 'quiet'),
         button('Oznacz prezent jako kupiony', () => openForm('Oznaczyć prezent jako kupiony?', [], 'Tak, prezent jest kupiony',
           'purchase', {}, 'Prezent, który dasz, jest już kupiony.', 'choice',
-          'To opcjonalne. Tego nie da się cofnąć. Lista, pytania i komentarze zamkną się dla Was obojga.'))));
+          'To opcjonalne. Tego nie da się cofnąć. Lista i pytania zamkną się dla Was obojga.'))));
     else choice.append(node('h2', '', 'Prezent, który dasz, jest już kupiony.'), node('p', '', 'Teraz czekamy na święta.'));
     return [title, person.state === 'open' && node('p', 'lead', 'Lista to podpowiedzi. Możesz też dać coś spoza listy.'),
       person.state !== 'open' && choice, section, person.state === 'open' && choice, suggestions(person, false)];
@@ -893,10 +934,15 @@ function startPreview(data) {
     })));
     return [node('h1', '', data.title), node('p', 'lead', 'Lista potraw na spotkanie. Każdy widzi, kto co przygotowuje.'), list, feed];
   }
+  let stopEditTimers;
   function render() {
     const view = { list, recipient: draw, food }[data.view];
     if (hint) hint.hidden = me().hints?.includes(hint.dataset.tabHint) ?? false;
-    if (screen && view) screen.replaceChildren(...[hint, ...view()].filter(Boolean));
+    if (screen && view) {
+      stopEditTimers?.();
+      screen.replaceChildren(...[hint, ...view()].filter(Boolean));
+      stopEditTimers = watchIdeaEditWindows(screen);
+    }
     badge('list', unreadList(me()).length);
     badge('recipient', unreadGiver(recipient()).length);
     badge('food', unreadFood(state.food, me()).length);
