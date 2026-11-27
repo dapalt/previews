@@ -31,6 +31,16 @@ const idea = fields => ({
   title: text(fields.title, 140), description: value(fields.description, 1500),
   price: value(fields.price, 100), link: link(fields.link),
 });
+const unreadList = person => [
+  ...person.items.flatMap(item => item.threads),
+  ...(person.state === 'open' ? person.suggestions.filter(s => s.status === 'pending') : []),
+].filter(entry => entry.unreadByOwner);
+const unreadGiver = person => person ? [
+  ...person.items.flatMap(item => item.threads
+    .filter(thread => thread.kind === 'question')
+    .flatMap(thread => thread.answers.filter(answer => answer.unreadByGiver))),
+  ...person.suggestions.filter(suggestion => suggestion.unreadByGiver),
+] : [];
 
 export function updatePreview(state, actor, action, fields, { id, now }) {
   const next = structuredClone(state);
@@ -69,13 +79,15 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       else {
         const thread = item.threads.find(thread => thread.id === fields.thread && thread.kind === 'question');
         check(thread);
-        thread.answers.push(entry);
+        thread.answers.push({ ...entry, id, unreadByGiver: true });
       }
       break;
     }
     case 'read':
-      for (const item of me.items) for (const thread of item.threads) delete thread.unreadByOwner;
-      if (me.state === 'open') for (const suggestion of me.suggestions) delete suggestion.unreadByOwner;
+      for (const entry of unreadList(me)) delete entry.unreadByOwner;
+      break;
+    case 'read-giver':
+      for (const entry of unreadGiver(recipient)) delete entry.unreadByGiver;
       break;
     case 'suggest':
       check(maySuggest(recipient));
@@ -85,6 +97,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       const suggestion = me.suggestions.find(suggestion => suggestion.id === fields.suggestion);
       check(me.state === 'open' && suggestion?.status === 'pending' && ['accepted', 'rejected'].includes(fields.decision));
       suggestion.status = fields.decision;
+      suggestion.unreadByGiver = true;
       suggestion.comment = value(fields.comment, 500);
       if (fields.decision === 'accepted') me.items.push(newIdea(suggestion));
       break;
@@ -228,27 +241,31 @@ function startPreview(data) {
   const me = () => state.people.find(person => person.id === data.actor);
   const recipient = () => state.people.find(person => person.id === me().recipient);
   const pending = person => person.suggestions.filter(s => s.status === 'pending');
-  const unread = person => [
-    ...person.items.flatMap(item => item.threads),
-    ...(person.state === 'open' ? pending(person) : []),
-  ].filter(entry => entry.unreadByOwner);
-  const mark = (el, id) => {
+  const mark = (el, id, after) => {
     if (openActivity.has(id)) {
       el.classList.add('new-activity');
-      el.prepend(node('span', 'new-label', 'Nowe'));
+      const label = node('span', 'new-label', 'Nowe');
+      if (after) el.firstElementChild.after(label);
+      else el.prepend(label);
     }
     return el;
   };
-  const badge = () => {
-    const tab = document.querySelector('[data-preview-tab="list"]');
+  const badge = (view, count) => {
+    const tab = document.querySelector(`[data-preview-tab="${view}"]`);
     if (!tab) return;
     tab.querySelector('.unread-count')?.remove();
     tab.querySelector('[data-preview-unread]')?.remove();
-    const count = unread(me()).length;
-    if (!count || data.view === 'list') return;
+    if (!count || data.view === view) return;
+    let icon = tab.querySelector('.nav-icon');
+    if (!icon) {
+      const svg = tab.querySelector('svg');
+      icon = node('span', 'nav-icon');
+      svg.replaceWith(icon);
+      icon.append(svg);
+    }
     const countEl = node('span', 'unread-count', count);
     countEl.setAttribute('aria-hidden', 'true');
-    tab.prepend(countEl);
+    icon.append(countEl);
     const label = node('span', 'sr-only', ' — do przeczytania: ' + count);
     label.dataset.previewUnread = '';
     tab.append(label);
@@ -354,13 +371,17 @@ function startPreview(data) {
     const discussion = item.threads.map(thread => {
       if (thread.kind === 'note') return node('div', 'item-note', node('strong', '', 'Komentarz'),
         node('p', 'multiline', thread.answer), ref(thread.link), date(thread.createdAt));
-      return mark(node('div', 'question', node('strong', '', owner ? 'Anonimowe pytanie:' : 'Twoje anonimowe pytanie:'),
+      const question = node('div', 'question', node('strong', '', owner ? 'Anonimowe pytanie:' : 'Twoje anonimowe pytanie:'),
         node('p', 'multiline', thread.question), date(thread.createdAt),
-        ...thread.answers.map(answer => node('div', 'answer', node('strong', '', 'Odpowiedź:'),
-          node('p', 'multiline', answer.answer), ref(answer.link), date(answer.createdAt))),
+        ...thread.answers.map(answer => {
+          const reply = node('div', 'answer', node('strong', '', 'Odpowiedź:'),
+            node('p', 'multiline', answer.answer), ref(answer.link), date(answer.createdAt));
+          return owner ? reply : mark(reply, answer.id, true);
+        }),
         thread.answers.length ? null : node('p', 'question-status', 'Brak odpowiedzi'),
         owner && writable ? node('div', 'mt-sm', button(thread.answers.length ? 'Dopisz odpowiedź' : 'Odpowiedz',
-          () => discuss('reply', item, thread))) : null), thread.id);
+          () => discuss('reply', item, thread))) : null);
+      return owner ? mark(question, thread.id, true) : question;
     });
     const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), ...discussion),
       controls.length ? node('div', 'gift-actions', ...controls) : null);
@@ -398,7 +419,7 @@ function startPreview(data) {
             entry.title, accept ? node('p', 'notice', 'Pomysł trafi na Twoją listę. To nie znaczy, że dostaniesz właśnie ten prezent.') : null));
         })));
       }
-      return owner ? mark(card, entry.id) : card;
+      return mark(card, entry.id);
     })));
     return section;
   }
@@ -560,23 +581,26 @@ function startPreview(data) {
   function render() {
     const view = { list, recipient: draw, food }[data.view];
     if (screen && view) screen.replaceChildren(...view().filter(Boolean));
-    badge();
+    badge('list', unreadList(me()).length);
+    badge('recipient', unreadGiver(recipient()).length);
   }
-  if (data.view === 'list') {
-    openActivity = new Set(unread(me()).map(entry => entry.id));
+  function openUnread() {
+    const entries = data.view === 'list' ? unreadList(me()) : data.view === 'recipient' ? unreadGiver(recipient()) : [];
+    openActivity = new Set(entries.map(entry => entry.id));
     if (openActivity.size) {
       try {
-        commit('read');
+        commit(data.view === 'list' ? 'read' : 'read-giver');
       } catch {
         banner.append(' Nie można oznaczyć zmian jako przeczytane.');
       }
     }
   }
+  openUnread();
   window.addEventListener('pageshow', event => {
     if (!event.persisted) return;
     try {
       state = storage().read();
-      openActivity.clear();
+      openUnread();
       render();
     } catch {
       banner.append(' Nie można odczytać próbnych zmian.');

@@ -1,6 +1,7 @@
 :root{--bg:#faf9f4;--surface:#fffefa;--ink:#243c32;--muted:#506157;--green:#245b44;--button-ink:#fff;--pale:#eaf1e8;--line:#d7dfd3;--control-line:#687e6e;--warning:#f9eedb;--warning-ink:#794d18;--red:#9a3035;--field:#fff;--bar-min:62px;color-scheme:only light}
 *{box-sizing:border-box}
 html{scroll-padding-block:calc(var(--topbar-height,0px) + 0.75rem) calc(var(--bottom-bar-height,0px) + 0.75rem)}
+html:has(.topbar):has(:target){--topbar-height:calc(max(var(--bar-min),5rem) + env(safe-area-inset-top))}
 body{margin:0;background:var(--bg);color:var(--ink);font:1.125rem/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 button,input,textarea,select{font:inherit}
 button,a,input,textarea,select{-webkit-tap-highlight-color:transparent}
@@ -178,7 +179,7 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .suggestion-box{padding:20px;border:1px solid var(--line);border-radius:13px}
 .suggestion-box .gift-main{padding:0}
 .new-activity{--new-bg:#f3e9ff;--new-ink:#56288b;background:var(--new-bg);border:1px solid var(--new-ink);border-inline-start-width:4px;border-radius:10px}
-.question.new-activity{padding:12px}
+.question.new-activity,.answer.new-activity{padding:12px}
 .new-label{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--new-ink);color:var(--new-bg);font-size:0.9375rem;font-weight:700}
 .question .new-label,.answer .new-label{margin-inline-start:8px}
 .suggestion-box .new-label{margin-bottom:8px}
