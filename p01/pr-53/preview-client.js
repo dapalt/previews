@@ -348,6 +348,7 @@ export function measureBars() {
 }
 
 export function showResult(result, snackbar, announcement) {
+  snackbar.setAttribute('aria-hidden', 'true');
   const { top, height } = snackbar.getBoundingClientRect();
   const headerBottom = document.querySelector('.topbar')?.getBoundingClientRect().bottom ?? 0;
   const gap = parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.75;
@@ -754,7 +755,6 @@ function startPreview(data) {
     if (message) {
       const snackbar = node('p', 'snackbar', node('span', '', '✓'), ' ',
         node('span', '', typeof message === 'function' ? message(id) : message));
-      snackbar.setAttribute('aria-hidden', 'true');
       screen.prepend(snackbar);
       showResult(result, snackbar, announcement);
     } else {
@@ -928,10 +928,11 @@ function startPreview(data) {
     const preferences = form('Zapisz ustawienie', [], fields => {
       const count = pending(person).length;
       if (fields.mode === 'none' && count) {
+        const removalNotice = 'Usunięto te, które czekały na odpowiedź.';
         openForm('Przestać przyjmować propozycje?', [], 'Tak, nie przyjmuję propozycji', 'mode', fields,
-          'Nie przyjmujesz propozycji.', 'suggestion-settings-result',
+          'Nie przyjmujesz propozycji. ' + removalNotice, 'suggestion-settings-result',
           `Propozycje czekające na odpowiedź: ${count}. Zostaną usunięte bez odpowiedzi.`, null,
-          result => result.after(node('p', 'notice', 'Usunięto te, które czekały na odpowiedź.')), preferences.querySelector('button'));
+          result => result.after(node('p', 'notice', removalNotice)), preferences.querySelector('button'));
       } else apply('mode', fields, fields.mode === 'none' ? 'Nie przyjmujesz propozycji.' : 'Zapisano ustawienie propozycji.', 'suggestion-settings-result');
     }, settings);
     preferences.classList.add('preference');
