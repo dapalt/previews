@@ -56,6 +56,13 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
   const ownItem = () => me.items.find(item => item.id === fields.item);
   const newIdea = input => ({ ...idea(input), id, createdAt: day, threads: [] });
   switch (action) {
+    case 'hint': {
+      const { tab } = fields;
+      check(['recipient', 'list', 'food', 'details'].includes(tab) && (tab !== 'food' || next.food?.enabled));
+      me.hints ??= [];
+      if (!me.hints.includes(tab)) me.hints.push(tab);
+      break;
+    }
     case 'add':
       check(me.state === 'open');
       me.items.push(newIdea(fields));
@@ -237,6 +244,7 @@ function startPreview(data) {
   }
   if (!data.actor) return;
   const screen = main.querySelector('[data-preview-screen]');
+  const hint = main.querySelector('[data-tab-hint]');
   let oldest = false;
   let openActivity = new Set();
   let currentForm;
@@ -296,6 +304,21 @@ function startPreview(data) {
     state = next;
     return id;
   };
+  if (hint) {
+    const dismiss = hint.querySelector('[data-preview-dismiss-hint]');
+    dismiss.disabled = false;
+    dismiss.addEventListener('click', () => {
+      try {
+        commit('hint', { tab: hint.dataset.tabHint });
+        hint.hidden = true;
+        const heading = main.querySelector('h1');
+        heading.tabIndex = -1;
+        heading.focus();
+      } catch (err) {
+        banner.append(' ' + err.message);
+      }
+    });
+  }
   const apply = (action, fields, message, target, { afterReplies = false } = {}) => {
     const id = commit(action, fields);
     if (currentForm) {
@@ -601,7 +624,8 @@ function startPreview(data) {
   }
   function render() {
     const view = { list, recipient: draw, food }[data.view];
-    if (screen && view) screen.replaceChildren(...view().filter(Boolean));
+    if (hint) hint.hidden = me().hints?.includes(hint.dataset.tabHint) ?? false;
+    if (screen && view) screen.replaceChildren(...[hint, ...view()].filter(Boolean));
     badge('list', unreadList(me()).length);
     badge('recipient', unreadGiver(recipient()).length);
     badge('food', unreadFood(state.food, me()).length);
