@@ -9,8 +9,10 @@ button{cursor:pointer}
 button:disabled{cursor:default;opacity:.58}
 :focus-visible{outline:3px solid var(--green);outline-offset:4px}
 [data-action-focus]:focus{outline:3px solid var(--green);outline-offset:3px}
-.food-toast{--toast-bottom:calc(var(--bottom-bar-height,6.5rem) + 1rem + env(safe-area-inset-bottom));--toast-top:calc(max(var(--topbar-height,0px),5rem + env(safe-area-inset-top)) + 1rem);position:fixed;inset-inline:0;bottom:var(--toast-bottom);z-index:9;width:min(calc(100% - 2rem),35rem);max-height:calc(100vh - var(--toast-top) - var(--toast-bottom));max-height:calc(100dvh - var(--toast-top) - var(--toast-bottom));margin:0 auto;overflow:hidden;border-radius:10px;background:var(--green);color:var(--button-ink);font-weight:650;pointer-events:none;animation:food-toast-hide 3s step-end forwards}
-.food-toast span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;margin:0.75rem 1rem}
+.food-item:has(>.food-toast),.feed-entry:has(>.food-toast){position:relative;scroll-margin-block-start:var(--food-scroll-margin,0px)}
+html:has(.food-toast){--food-scroll-margin:max(0px,calc(5rem + env(safe-area-inset-top) - var(--topbar-height,0px)))}
+.food-toast{position:absolute;inset-block-start:4px;inset-inline-start:4px;z-index:9;width:max-content;max-width:calc(100% - 8px);overflow:hidden;border-radius:10px;background:var(--green);color:var(--button-ink);font-weight:650;pointer-events:none;animation:food-toast-hide 3s step-end forwards}
+.food-toast span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;margin:0.5rem 0.75rem}
 @keyframes food-toast-hide{to{visibility:hidden}}
 a{color:var(--green);text-underline-offset:4px;overflow-wrap:anywhere}
 h1,h2,h3,p{margin:0;overflow-wrap:anywhere}

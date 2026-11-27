@@ -583,12 +583,12 @@ function startPreview(data) {
     render();
     const toast = node('p', 'food-toast', node('span', '', typeof message === 'function' ? message(id) : message));
     toast.setAttribute('aria-hidden', 'true');
-    screen.prepend(toast);
     const result = document.getElementById(typeof target === 'function' ? target(id) : target);
+    result.prepend(toast);
     result.tabIndex = -1;
     result.setAttribute('data-action-focus', '');
     result.focus({ preventScroll: true });
-    result.scrollIntoView({ block: 'nearest' });
+    result.scrollIntoView({ block: 'start' });
     foodAnnouncement.textContent = '';
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (toast.isConnected) foodAnnouncement.textContent = toast.textContent;
