@@ -92,13 +92,25 @@ label,legend{display:block;max-width:100%;overflow-wrap:anywhere;font-size:1.062
 input:not([type=hidden],[type=radio],[type=checkbox]),textarea,select{display:block;width:100%;min-width:0;min-height:55px;padding:13px 14px;border:1px solid var(--control-line);border-radius:11px;background:var(--field);color:var(--ink);font-size:1.125rem}
 textarea{min-height:120px;resize:vertical}
 input::placeholder,textarea::placeholder{color:var(--muted);opacity:.85}
-.pin-row{position:relative}
-.pin-row input{font-size:1.75rem;letter-spacing:.25em;padding-right:64px}
-.eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);min-width:48px;min-height:48px;display:grid;place-items:center;background:var(--field);border:1px solid var(--control-line);border-radius:8px;color:var(--green)}
+.pin-row{display:flex;align-items:center;gap:12px}
+.pin-field{flex:0 1 16rem;min-width:0;position:relative}
+.eye{flex:none;min-width:48px;min-height:48px;display:grid;place-items:center;background:var(--field);border:1px solid var(--control-line);border-radius:8px;color:var(--green)}
+.pin-slots{display:none}
+@supports(width:1cqi){
+  .pin-field{container-type:inline-size;overflow:clip}
+  .pin-field input:not([type=hidden]){--pin-gap:clamp(4px,2cqi,8px);--pin-cell:calc((100cqi - 3 * var(--pin-gap))/4);position:absolute;z-index:1;inset:0 auto 0 0;width:calc(100% + var(--pin-cell)/2 + var(--pin-gap));height:100%;padding:0 0 0 calc((var(--pin-cell) - 1ch)/2);border:0;outline:0;background:transparent;font:650 1.75rem/1 ui-monospace,monospace;letter-spacing:calc(var(--pin-cell) + var(--pin-gap) - 1ch)}
+  .pin-slots{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:clamp(4px,2cqi,8px)}
+  .pin-slots span{min-height:3.625rem;border:1px solid var(--control-line);border-radius:11px;background:var(--field)}
+  .pin-field input[aria-invalid=true]+.pin-slots span{border-color:var(--red)}
+  .pin-field input:focus+.pin-slots span,.pin-field input:focus+.pin-slots [data-active]{outline:2px solid var(--green);outline-offset:-3px}
+  .pin-field input:focus+.pin-slots:has([data-active]) span:not([data-active]){outline:none}
+  @media(forced-colors:active){.pin-field input:not([type=hidden]){forced-color-adjust:none;color:CanvasText;caret-color:CanvasText}}
+}
 .error{color:var(--red);font-size:1.0625rem;margin-top:8px}
 label + .error{margin-bottom:8px}
 input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="true"]{border-color:var(--red)}
 .error:empty{display:none}
+.pin-error:empty{display:block;margin:0}
 .form-group{border:1px solid var(--line);border-radius:12px;padding:17px;margin:0;min-width:0}
 .form-group legend{padding:0 7px;margin:0}
 .budget-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr));gap:12px}
