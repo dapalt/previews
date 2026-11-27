@@ -330,7 +330,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       break;
     }
     case 'mode':
-      check(me.state === 'open' && ['unlimited', 'single', 'none'].includes(fields.mode));
+      check(me.state === 'open' && ['unlimited', 'none'].includes(fields.mode));
       me.mode = fields.mode;
       if (me.mode === 'none') me.suggestions = me.suggestions.filter(suggestion => suggestion.status !== 'pending');
       break;
@@ -361,7 +361,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
         food.feed.push({ ...entry, kind: 'comment', text: text(fields.text, 1200) });
       } else if (action === 'food-reply') {
         const parent = food.feed.find(entry => entry.id === fields.entry);
-        check(parent);
+        check(parent && !parent.replyOnly);
         parent.replies.push({ ...entry, text: text(fields.text, 1200) });
       } else {
         const item = food.items.find(item => item.id === fields.item);
@@ -380,8 +380,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
 }
 
 function maySuggest(recipient) {
-  return recipient?.state === 'open' && recipient.mode !== 'none' &&
-    (recipient.mode !== 'single' || recipient.suggestions.every(suggestion => suggestion.status !== 'pending'));
+  return recipient?.state === 'open' && recipient.mode !== 'none';
 }
 
 const node = (tag, className, ...children) => {
@@ -672,8 +671,8 @@ function startPreview(data) {
     section.id = owner ? 'received-suggestions' : 'suggestions';
     if (owner) section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
     else if (maySuggest(person)) section.append(node('div', 'mt-sm', button('Zaproponuj pomysł', () => ideaForm('suggest'))));
-    else if (person.state === 'open') section.append(node('p', 'notice', person.mode === 'none'
-      ? 'Ta osoba nie przyjmuje teraz propozycji.' : 'Poczekaj na odpowiedź przed wysłaniem kolejnej propozycji.'));
+    else if (person.state === 'open') section.append(node('div', 'notice mt-sm',
+      node('h3', '', 'Ta osoba nie przyjmuje teraz propozycji.'), node('p', '', 'Oczekujące propozycje usunięto.')));
     section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
       const card = node('article', 'suggestion-box', presentIdea(entry), ref(entry.link));
       if (!owner) {
@@ -706,35 +705,46 @@ function startPreview(data) {
     const stateNote = open ? (person.unlocked ? 'Twoja lista jest znowu odblokowana.' : '') :
       person.state === 'selected' ? 'Twoja lista jest zablokowana. Nadal możesz odpowiadać na pytania i dodawać komentarze.' :
         'Prezent dla Ciebie jest już kupiony. Teraz czekamy na święta.';
-    const settings = node('fieldset', 'form-group preference-options', node('legend', '', 'Czy przyjmujesz propozycje prezentów?'));
-    for (const [mode, label] of [['unlimited', 'Tak, bez limitu'], ['single', 'Tak, po jednej'], ['none', 'Nie przyjmuję']]) {
+    const question = 'Czy przyjmujesz propozycje prezentów?';
+    const savedMode = person.mode === 'none' ? 'none' : 'unlimited';
+    const settings = node('fieldset', 'form-group preference-options', node('legend', '', question));
+    for (const [mode, label] of [['unlimited', 'Tak'], ['none', 'Nie']]) {
       const input = node('input');
       input.type = 'radio';
       input.name = 'mode';
       input.value = mode;
-      input.checked = person.mode === mode;
+      input.checked = savedMode === mode;
       settings.append(node('label', '', input, node('span', '', label)));
     }
     const preferences = form('Zapisz ustawienie', [], fields => {
-      if (fields.mode === 'none' && pending(person).length) {
-        openForm('Przestać przyjmować propozycje?', [], 'Tak, nie przyjmuję propozycji', 'mode', fields, 'Zapisano ustawienie propozycji.',
-          'suggestion-settings', `Propozycje czekające na odpowiedź: ${pending(person).length}. Zostaną usunięte bez odpowiedzi.`);
-      } else apply('mode', fields, 'Zapisano ustawienie propozycji.', 'suggestion-settings');
+      const count = pending(person).length;
+      if (fields.mode === 'none' && count) {
+        openForm('Przestać przyjmować propozycje?', [], 'Tak, nie przyjmuję propozycji', 'mode', fields,
+          'Nie przyjmujesz propozycji. Usunięto te, które czekały na odpowiedź.', 'suggestion-settings-result',
+          `Propozycje czekające na odpowiedź: ${count}. Zostaną usunięte bez odpowiedzi.`, null, null, preferences.querySelector('button'));
+      } else apply('mode', fields, fields.mode === 'none' ? 'Nie przyjmujesz propozycji.' : 'Zapisano ustawienie propozycji.', 'suggestion-settings-result');
     }, settings);
-    const optionPanel = node('section', 'section-gap', preferences);
+    preferences.classList.add('preference');
+    preferences.querySelector('button').classList.add('secondary');
+    const modeResult = node('div');
+    modeResult.id = 'suggestion-settings-result';
+    const optionPanel = node('section', '', node('details', 'disclosure',
+      node('summary', '', question + (savedMode === 'none' ? ' Nie' : ' Tak')), preferences), modeResult);
     optionPanel.id = 'suggestion-settings';
     const suggestionResult = node('div');
     suggestionResult.id = 'suggestion-result';
+    const addIdea = open && node('div', 'mt', button('Dodaj pomysł', event => ideaForm('add', {}, event.currentTarget)));
     return [title, intro, stateNote && node('p', 'notice mt', stateNote),
       open && person.items.length < 2 && node('p', 'mt-sm', 'Dodaj 2 lub 3 pomysły, wtedy trudniej zgadnąć, co dostaniesz.'),
-      cards(person, true, 'Twoja lista jest pusta.'), open && (pending(person).length ? suggestions(person, true) : suggestionResult),
-      open && optionPanel, open && node('div', 'mt', button('Dodaj pomysł', event => ideaForm('add', {}, event.currentTarget)))];
+      cards(person, true, 'Twoja lista jest pusta. Jeśli chcesz, dodaj pierwszy pomysł.'), !person.items.length && addIdea,
+      open && (pending(person).length ? suggestions(person, true) : suggestionResult),
+      person.items.length > 0 && addIdea, open && optionPanel];
   }
   function draw() {
     const person = recipient();
     const title = node('h1', 'recipient-title', node('span', 'task', 'Robisz prezent dla:'), node('span', 'recipient-name', person.name));
     const section = node('section', 'section-gap', node('h2', 'list-heading', 'Lista pomysłów'),
-      cards(person, false, 'Nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.'));
+      cards(person, false, `${person.name} nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.`));
     const choice = node('section', 'choice-panel section-gap');
     choice.id = 'choice';
     const change = (action, label, message, style) => button(label, event => {
@@ -829,7 +839,7 @@ function startPreview(data) {
     const head = entry => node('div', 'feed-head', node('strong', '', entry.authorName || 'Organizator'), when(entry.createdAt));
     const eventCopy = {
       added: ['dodaje:', ''], claimed: ['bierze:', ''], released: ['rezygnuje z:', ' (wolne)'],
-      'organizer-provided': ['przejmuje:', ' (zapewnia organizator)'], opened: ['udostępnia do wzięcia:', ''], removed: ['usuwa:', ''],
+      removed: ['usuwa:', ''],
     };
     const entries = oldest ? food.feed : food.feed.toReversed();
     feed.append(composer('composer mt-sm', 'comment-text', 'Dodaj komentarz', 'Komentarz…', 'composer-btn',
@@ -842,7 +852,7 @@ function startPreview(data) {
           const header = head(reply);
           return mark(node('div', 'feed-reply', header, node('p', 'multiline', reply.text)), reply.id, header.firstElementChild);
         })) : null;
-      const replyBox = node('details', 'reply-box', node('summary', 'reply-toggle', node('span', '', 'Odpowiedz')),
+      const replyBox = entry.replyOnly ? null : node('details', 'reply-box', node('summary', 'reply-toggle', node('span', '', 'Odpowiedz')),
         composer('reply-form', 'reply-' + entry.id, 'Odpowiedź', 'Odpowiedź…', 'secondary composer-btn',
           values => apply('food-reply', { ...values, entry: entry.id }, 'Dodano odpowiedź.', article.id, { afterReplies: true }), true));
       if (copy) {
@@ -854,7 +864,9 @@ function startPreview(data) {
         return mark(article, entry.id, line.firstElementChild);
       } else {
         const header = head(entry);
-        article.append(header, node('p', 'multiline feed-body', entry.text), replies, replyBox);
+        article.append(header, node('p', 'multiline feed-body', entry.text));
+        if (replies) article.append(replies);
+        if (replyBox) article.append(replyBox);
         return mark(article, entry.id, header.firstElementChild);
       }
     })));
