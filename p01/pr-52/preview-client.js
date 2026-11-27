@@ -125,9 +125,19 @@ function revealCaret(field) {
   const range = document.createRange();
   range.setStart(text, caret);
   range.setEnd(text, caret + 1);
-  const { top, bottom } = range.getBoundingClientRect();
+  const next = range.getBoundingClientRect();
+  let { top, bottom } = next;
   const lineHeight = parseFloat(style.lineHeight);
   const leading = Number.isFinite(lineHeight) ? Math.max(0, lineHeight - (bottom - top)) / 2 : 0;
+  if (caret > 0 && field.value[caret - 1] !== '\n') {
+    range.setStart(text, caret - 1);
+    range.setEnd(text, caret);
+    const previous = range.getBoundingClientRect();
+    if (previous.top < top) {
+      top = previous.top;
+      if (bottom - top + 2 * leading > field.clientHeight) bottom = previous.bottom;
+    }
+  }
   const origin = mirror.getBoundingClientRect().top;
   mirror.remove();
   const visibleTop = field.scrollTop;
