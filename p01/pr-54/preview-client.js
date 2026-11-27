@@ -638,7 +638,7 @@ function startPreview(data) {
     const person = recipient();
     const title = node('h1', 'recipient-title', node('span', 'task', 'Robisz prezent dla:'), node('span', 'recipient-name', person.name));
     const section = node('section', 'section-gap', node('h2', 'list-heading', 'Lista pomysłów'),
-      cards(person, false, 'Nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.'));
+      cards(person, false, `${person.name} nie ma jeszcze widocznych pomysłów. Możesz dać prezent według własnego pomysłu.`));
     const choice = node('section', 'choice-panel section-gap');
     choice.id = 'choice';
     const change = (action, label, message, style) => button(label, event => {
