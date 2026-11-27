@@ -102,6 +102,102 @@ ${dailyRows.length ? '<p class="mt-sm">Pełny pasek oznacza dzień z największ�
 ${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, people }) => [label, total, people]))}</section>`;
 }
 
+export const editableFieldSelector = ':is(textarea, input:is([type=text], [type=password], [type=search], [type=email], [type=url], [type=tel], [type=number], :not([type]))):not(:disabled, [readonly])';
+
+function revealCaret(field) {
+  if (field.scrollHeight <= field.clientHeight) return;
+  const caret = field.selectionDirection === 'backward' ? field.selectionStart : field.selectionEnd;
+  if (caret === field.value.length) {
+    field.scrollTop = field.scrollHeight;
+    return;
+  }
+
+  const style = getComputedStyle(field);
+  const mirror = document.createElement('div');
+  Object.assign(mirror.style, { position: 'fixed', visibility: 'hidden', left: '-10000px', top: '0',
+    width: field.clientWidth + 'px', boxSizing: 'border-box' });
+  for (const property of ['font', 'lineHeight', 'letterSpacing', 'padding', 'whiteSpace', 'overflowWrap',
+    'wordBreak', 'textIndent', 'tabSize', 'direction']) mirror.style[property] = style[property];
+  const text = document.createTextNode(field.value[caret] === '\n'
+    ? field.value.slice(0, caret) + '\u200b' + field.value.slice(caret) : field.value);
+  mirror.append(text);
+  document.body.append(mirror);
+  const range = document.createRange();
+  range.setStart(text, caret);
+  range.setEnd(text, caret + 1);
+  const next = range.getBoundingClientRect();
+  let { top, bottom } = next;
+  const lineHeight = parseFloat(style.lineHeight);
+  const leading = Number.isFinite(lineHeight) ? Math.max(0, lineHeight - (bottom - top)) / 2 : 0;
+  if (caret > 0 && field.value[caret - 1] !== '\n') {
+    range.setStart(text, caret - 1);
+    range.setEnd(text, caret);
+    const previous = range.getBoundingClientRect();
+    if (previous.top < top) {
+      top = previous.top;
+      if (bottom - top + 2 * leading > field.clientHeight) bottom = previous.bottom;
+    }
+  }
+  const origin = mirror.getBoundingClientRect().top;
+  mirror.remove();
+  const visibleTop = field.scrollTop;
+  const visibleBottom = visibleTop + field.clientHeight;
+  if (top - origin - leading < visibleTop) field.scrollTop = top - origin - leading;
+  else if (bottom - origin + leading > visibleBottom) field.scrollTop = bottom - origin + leading - field.clientHeight;
+}
+
+export function keepEditingFieldVisible() {
+  const root = document.documentElement;
+  const viewport = window.visualViewport;
+  const header = document.querySelector('.topbar');
+  const footer = document.querySelector('.nav, .ack-bar');
+  let frame;
+
+  const visualTop = () => viewport?.offsetTop ?? 0;
+  const syncHeader = () => root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
+  const update = () => {
+    frame = undefined;
+    syncHeader();
+    const field = document.activeElement;
+    const editing = field?.matches(editableFieldSelector);
+    const layoutHeight = root.clientHeight;
+    const height = viewport?.height ?? layoutHeight;
+    const scale = viewport?.scale ?? 1;
+    const zoomedWithoutKeyboard = scale !== 1 && height * scale >= layoutHeight - 1;
+    if (!editing || zoomedWithoutKeyboard) {
+      root.style.removeProperty('--keyboard-inset');
+      root.style.removeProperty('--editing-height');
+      return;
+    }
+
+    root.style.setProperty('--keyboard-inset', Math.max(0, layoutHeight - height) + 'px');
+    const top = Math.max(visualTop(), header?.getBoundingClientRect().bottom ?? 0) + 8;
+    let bottom = visualTop() + height;
+    const footerRect = footer?.getBoundingClientRect();
+    if (footerRect && footerRect.bottom > top) bottom = Math.min(bottom, footerRect.top);
+    bottom -= 8;
+    if (bottom <= top) return;
+
+    const previousHeight = field.clientHeight;
+    root.style.setProperty('--editing-height', Math.floor(bottom - top) + 'px');
+    if (field.tagName === 'TEXTAREA' && field.clientHeight < previousHeight) revealCaret(field);
+    const rect = field.getBoundingClientRect();
+    const delta = rect.top < top ? rect.top - top : Math.max(0, rect.bottom - bottom);
+    if (delta) window.scrollBy({ top: delta, behavior: 'instant' });
+  };
+
+  const schedule = () => {
+    if (frame === undefined) frame = requestAnimationFrame(update);
+  };
+  document.addEventListener('focusin', schedule);
+  document.addEventListener('focusout', schedule);
+  document.addEventListener('input', schedule);
+  window.addEventListener('resize', schedule);
+  viewport?.addEventListener('resize', schedule);
+  viewport?.addEventListener('scroll', syncHeader);
+  schedule();
+}
+
 
 const storagePrefix = 'upominki-preview:';
 const warsawDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short' });
@@ -234,7 +330,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       break;
     }
     case 'mode':
-      check(me.state === 'open' && ['unlimited', 'single', 'none'].includes(fields.mode));
+      check(me.state === 'open' && ['unlimited', 'none'].includes(fields.mode));
       me.mode = fields.mode;
       if (me.mode === 'none') me.suggestions = me.suggestions.filter(suggestion => suggestion.status !== 'pending');
       break;
@@ -284,8 +380,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
 }
 
 function maySuggest(recipient) {
-  return recipient?.state === 'open' && recipient.mode !== 'none' &&
-    (recipient.mode !== 'single' || recipient.suggestions.every(suggestion => suggestion.status !== 'pending'));
+  return recipient?.state === 'open' && recipient.mode !== 'none';
 }
 
 const node = (tag, className, ...children) => {
@@ -596,8 +691,8 @@ function startPreview(data) {
     section.id = owner ? 'received-suggestions' : 'suggestions';
     if (owner) section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
     else if (maySuggest(person)) section.append(node('div', 'mt-sm', button('Zaproponuj pomysł', () => ideaForm('suggest'))));
-    else if (person.state === 'open') section.append(node('p', 'notice', person.mode === 'none'
-      ? 'Ta osoba nie przyjmuje teraz propozycji.' : 'Poczekaj na odpowiedź przed wysłaniem kolejnej propozycji.'));
+    else if (person.state === 'open') section.append(node('div', 'notice mt-sm',
+      node('h3', '', 'Ta osoba nie przyjmuje teraz propozycji.'), node('p', '', 'Oczekujące propozycje usunięto.')));
     section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
       const card = node('article', 'suggestion-box', presentIdea(entry), ref(entry.link));
       if (!owner) {
@@ -630,29 +725,40 @@ function startPreview(data) {
     const stateNote = open ? (person.unlocked ? 'Twoja lista jest znowu odblokowana.' : '') :
       person.state === 'selected' ? 'Twoja lista jest zablokowana. Nadal możesz odpowiadać na pytania i dodawać komentarze.' :
         'Prezent dla Ciebie jest już kupiony. Teraz czekamy na święta.';
-    const settings = node('fieldset', 'form-group preference-options', node('legend', '', 'Czy przyjmujesz propozycje prezentów?'));
-    for (const [mode, label] of [['unlimited', 'Tak, bez limitu'], ['single', 'Tak, po jednej'], ['none', 'Nie przyjmuję']]) {
+    const question = 'Czy przyjmujesz propozycje prezentów?';
+    const savedMode = person.mode === 'none' ? 'none' : 'unlimited';
+    const settings = node('fieldset', 'form-group preference-options', node('legend', '', question));
+    for (const [mode, label] of [['unlimited', 'Tak'], ['none', 'Nie']]) {
       const input = node('input');
       input.type = 'radio';
       input.name = 'mode';
       input.value = mode;
-      input.checked = person.mode === mode;
+      input.checked = savedMode === mode;
       settings.append(node('label', '', input, node('span', '', label)));
     }
     const preferences = form('Zapisz ustawienie', [], fields => {
-      if (fields.mode === 'none' && pending(person).length) {
-        openForm('Przestać przyjmować propozycje?', [], 'Tak, nie przyjmuję propozycji', 'mode', fields, 'Zapisano ustawienie propozycji.',
-          'suggestion-settings', `Propozycje czekające na odpowiedź: ${pending(person).length}. Zostaną usunięte bez odpowiedzi.`);
-      } else apply('mode', fields, 'Zapisano ustawienie propozycji.', 'suggestion-settings');
+      const count = pending(person).length;
+      if (fields.mode === 'none' && count) {
+        openForm('Przestać przyjmować propozycje?', [], 'Tak, nie przyjmuję propozycji', 'mode', fields,
+          'Nie przyjmujesz propozycji. Usunięto te, które czekały na odpowiedź.', 'suggestion-settings-result',
+          `Propozycje czekające na odpowiedź: ${count}. Zostaną usunięte bez odpowiedzi.`, null, null, preferences.querySelector('button'));
+      } else apply('mode', fields, fields.mode === 'none' ? 'Nie przyjmujesz propozycji.' : 'Zapisano ustawienie propozycji.', 'suggestion-settings-result');
     }, settings);
-    const optionPanel = node('section', 'section-gap', preferences);
+    preferences.classList.add('preference');
+    preferences.querySelector('button').classList.add('secondary');
+    const modeResult = node('div');
+    modeResult.id = 'suggestion-settings-result';
+    const optionPanel = node('section', '', node('details', 'disclosure',
+      node('summary', '', question + (savedMode === 'none' ? ' Nie' : ' Tak')), preferences), modeResult);
     optionPanel.id = 'suggestion-settings';
     const suggestionResult = node('div');
     suggestionResult.id = 'suggestion-result';
+    const addIdea = open && node('div', 'mt', button('Dodaj pomysł', event => ideaForm('add', {}, event.currentTarget)));
     return [title, intro, stateNote && node('p', 'notice mt', stateNote),
       open && person.items.length < 2 && node('p', 'mt-sm', 'Dodaj 2 lub 3 pomysły, wtedy trudniej zgadnąć, co dostaniesz.'),
-      cards(person, true, 'Twoja lista jest pusta.'), open && (pending(person).length ? suggestions(person, true) : suggestionResult),
-      open && optionPanel, open && node('div', 'mt', button('Dodaj pomysł', event => ideaForm('add', {}, event.currentTarget)))];
+      cards(person, true, 'Twoja lista jest pusta. Jeśli chcesz, dodaj pierwszy pomysł.'), !person.items.length && addIdea,
+      open && (pending(person).length ? suggestions(person, true) : suggestionResult),
+      person.items.length > 0 && addIdea, open && optionPanel];
   }
   function draw() {
     const person = recipient();
@@ -840,6 +946,7 @@ function startPreview(data) {
 }
 
 if (typeof document !== 'undefined') {
+  keepEditingFieldVisible();
   const metadata = document.querySelector('meta[name="preview-data"]');
   if (metadata) startPreview(JSON.parse(metadata.content));
 }
