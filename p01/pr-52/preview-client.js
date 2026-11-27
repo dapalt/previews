@@ -102,7 +102,7 @@ ${dailyRows.length ? '<p class="mt-sm">Pełny pasek oznacza dzień z największ�
 ${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, people }) => [label, total, people]))}</section>`;
 }
 
-const editable = 'textarea, input:is([type=text], [type=password], [type=search], [type=email], [type=url], [type=tel], [type=number], :not([type]))';
+export const editableFieldSelector = ':is(textarea, input:is([type=text], [type=password], [type=search], [type=email], [type=url], [type=tel], [type=number], :not([type]))):not(:disabled, [readonly])';
 
 export function keepEditingFieldVisible() {
   const root = document.documentElement;
@@ -111,22 +111,23 @@ export function keepEditingFieldVisible() {
   const footer = document.querySelector('.nav, .ack-bar');
   let frame;
 
-  const visualTop = () => viewport?.scale === 1 ? viewport.offsetTop : 0;
+  const visualTop = () => viewport?.offsetTop ?? 0;
   const syncHeader = () => root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
   const update = () => {
     frame = undefined;
     syncHeader();
     const field = document.activeElement;
-    const editing = field?.matches(editable) && !field.readOnly && !field.disabled;
-    const zoomed = viewport && viewport.scale !== 1;
-    if (!editing || zoomed) {
+    const editing = field?.matches(editableFieldSelector);
+    const layoutHeight = root.clientHeight;
+    const height = viewport?.height ?? layoutHeight;
+    const scale = viewport?.scale ?? 1;
+    const zoomedWithoutKeyboard = scale !== 1 && height * scale >= layoutHeight - 1;
+    if (!editing || zoomedWithoutKeyboard) {
       root.style.removeProperty('--keyboard-inset');
       root.style.removeProperty('--editing-height');
       return;
     }
 
-    const layoutHeight = root.clientHeight;
-    const height = viewport?.height ?? layoutHeight;
     root.style.setProperty('--keyboard-inset', Math.max(0, layoutHeight - height) + 'px');
     const top = Math.max(visualTop(), header?.getBoundingClientRect().bottom ?? 0) + 8;
     let bottom = visualTop() + height;
