@@ -215,12 +215,12 @@ export function ideaCreationDay(createdAt) {
 }
 
 export function watchIdeaEditWindows(root) {
-  const timers = Array.from(root.querySelectorAll('[data-idea-edit-deadline]'), card => {
+  const timers = Array.from(root.querySelectorAll('[data-idea-edit-remaining]'), card => {
     const expire = () => {
       for (const el of card.querySelectorAll('[data-idea-edit-open]')) el.hidden = true;
       for (const el of card.querySelectorAll('[data-idea-edit-locked]')) el.hidden = false;
     };
-    return setTimeout(expire, Number(card.dataset.ideaEditDeadline) - Date.now());
+    return setTimeout(expire, Number(card.dataset.ideaEditRemaining));
   });
   return () => timers.forEach(clearTimeout);
 }
@@ -663,8 +663,8 @@ function startPreview(data) {
   function gift(item, owner, person) {
     const open = person.state === 'open', writable = person.state !== 'bought';
     const ownActions = owner && open;
-    const deadline = ownActions ? ideaEditDeadline(item.createdAt) : NaN;
-    const editable = deadline > Date.now();
+    const remaining = ownActions ? ideaEditDeadline(item.createdAt) - Date.now() : 0;
+    const editable = remaining > 0;
     const editState = (element, isOpen) => {
       element.setAttribute(isOpen ? 'data-idea-edit-open' : 'data-idea-edit-locked', '');
       element.hidden = isOpen !== editable;
@@ -700,7 +700,7 @@ function startPreview(data) {
     const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), ...discussion,
       editable && editState(node('p', 'mt-sm', ideaEditHint), true),
       ownActions && editState(node('p', 'mt-sm', ideaEditExpired), false)), ...controls);
-    if (editable) card.dataset.ideaEditDeadline = deadline;
+    if (editable) card.dataset.ideaEditRemaining = remaining;
     card.id = 'item-' + item.id;
     return card;
   }
