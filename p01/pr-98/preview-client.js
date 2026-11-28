@@ -1149,9 +1149,14 @@ function startPreview(data) {
       suggestion ? result => {
         const href = data.recipientList;
         if (!href) return;
+        const sent = recipient().suggestions.at(-1);
         const view = node('a', 'btn secondary mt-sm', 'Zobacz, co widzi odbiorca');
-        view.href = href + '#received-suggestion-' + recipient().suggestions.at(-1).id;
-        result.firstElementChild.after(view);
+        view.href = href + '#received-suggestion-' + sent.id;
+        const wait = arrival(sent.hold, timing()) - Date.now();
+        if (wait <= 0) return result.firstElementChild.after(view);
+        const note = node('p', 'small mt-sm', 'Odbiorca zobaczy propozycję, gdy minie opóźnienie ustawione przez organizatora.');
+        result.firstElementChild.after(note);
+        setTimeout(() => note.replaceWith(view), wait);
       } : null, returnFocus);
   }
   function discuss(action, item, thread) {
