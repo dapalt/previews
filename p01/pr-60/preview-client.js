@@ -258,27 +258,50 @@ export function keepEditingFieldVisible() {
   const footer = document.querySelector('.nav, .ack-bar');
   let frame;
 
-  const visualTop = () => viewport?.offsetTop ?? 0;
-  const syncHeader = () => root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
-  const update = () => {
-    frame = undefined;
-    syncHeader();
+  const visualTop = () => Math.max(0, viewport?.offsetTop ?? 0);
+  const clear = () => {
+    root.style.removeProperty('--visual-viewport-top');
+    root.style.removeProperty('--keyboard-inset');
+    root.style.removeProperty('--editing-height');
+    delete root.dataset.keyboardOpen;
+  };
+  const editingState = () => {
     const field = document.activeElement;
-    const editing = field?.matches(editableFieldSelector);
+    const editing = Boolean(field?.matches(editableFieldSelector));
     const layoutHeight = root.clientHeight;
     const height = viewport?.height ?? layoutHeight;
     const scale = viewport?.scale ?? 1;
     const zoomedWithoutKeyboard = scale !== 1 && height * scale >= layoutHeight - 1;
+    const keyboardInset = Math.max(0, layoutHeight - height);
+    const keyboardOpen = editing && !zoomedWithoutKeyboard && keyboardInset > 0;
+    return { field, editing, height, zoomedWithoutKeyboard, keyboardInset, keyboardOpen };
+  };
+  const syncEditingHeader = () => {
+    const { keyboardOpen } = editingState();
+    if (keyboardOpen) root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
+    else root.style.removeProperty('--visual-viewport-top');
+  };
+  const update = () => {
+    frame = undefined;
+    const { field, editing, height, zoomedWithoutKeyboard, keyboardInset, keyboardOpen } = editingState();
     if (!editing || zoomedWithoutKeyboard) {
-      root.style.removeProperty('--keyboard-inset');
-      root.style.removeProperty('--editing-height');
+      clear();
       return;
     }
 
-    root.style.setProperty('--keyboard-inset', Math.max(0, layoutHeight - height) + 'px');
+    if (keyboardOpen) {
+      root.dataset.keyboardOpen = '';
+      root.style.setProperty('--keyboard-inset', keyboardInset + 'px');
+      root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
+    } else {
+      delete root.dataset.keyboardOpen;
+      root.style.removeProperty('--keyboard-inset');
+      root.style.removeProperty('--visual-viewport-top');
+    }
+
     const top = Math.max(visualTop(), header?.getBoundingClientRect().bottom ?? 0) + 8;
     let bottom = visualTop() + height;
-    const footerRect = footer?.getBoundingClientRect();
+    const footerRect = !keyboardOpen && footer ? footer.getBoundingClientRect() : null;
     if (footerRect && footerRect.bottom > top) bottom = Math.min(bottom, footerRect.top);
     bottom -= 8;
     if (bottom <= top) return;
@@ -299,7 +322,7 @@ export function keepEditingFieldVisible() {
   document.addEventListener('input', schedule);
   window.addEventListener('resize', schedule);
   viewport?.addEventListener('resize', schedule);
-  viewport?.addEventListener('scroll', syncHeader);
+  viewport?.addEventListener('scroll', syncEditingHeader);
   schedule();
 }
 
@@ -339,6 +362,7 @@ export function measureBars() {
     for (const [property, bar] of bars) document.documentElement.style.setProperty(property, bar.offsetHeight + 'px');
   };
   update();
+  window.addEventListener('load', update, { once: true });
   if (typeof ResizeObserver === 'function') {
     const observer = new ResizeObserver(update);
     for (const [, bar] of bars) observer.observe(bar, { box: 'border-box' });
@@ -370,10 +394,32 @@ export function showResult(result, snackbar, announcement) {
   }));
 }
 
+export const recommendedHomeNameLength = 12;
+const homeNameSegmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('pl', { granularity: 'grapheme' }) : null;
+
+export function homeNamePreview(value, eventName) {
+  const custom = typeof value === 'string' ? value.trim() : '';
+  const name = custom || eventName;
+  const length = Array.from(homeNameSegmenter ? homeNameSegmenter.segment(name) : name).length;
+  return { name, count: `${length}/${recommendedHomeNameLength}`, usingFallback: !custom, warn: length > recommendedHomeNameLength };
+}
+
 export function previewHomeScreen() {
   const picker = document.querySelector('[data-home-screen-picker]');
   if (!picker) return;
   const image = picker.querySelector('[data-home-screen-icon]');
+  const name = picker.querySelector('#homeName');
+  const count = picker.querySelector('[data-home-name-count]');
+  const fallback = picker.querySelector('[data-home-name-fallback]');
+  const warning = picker.querySelector('[data-home-name-warning]');
+  const label = picker.querySelector('[data-home-name-preview]');
+  name.addEventListener('input', () => {
+    const preview = homeNamePreview(name.value, name.placeholder);
+    count.textContent = preview.count;
+    fallback.hidden = !preview.usingFallback;
+    warning.hidden = !preview.warn;
+    label.textContent = preview.name;
+  });
   picker.addEventListener('change', () => {
     const symbol = picker.querySelector('[name="homeSymbol"]:checked')?.value;
     const color = picker.querySelector('[name="homeColor"]').value;
@@ -740,9 +786,9 @@ function startPreview(data) {
       }
     });
   }
+  measureBars();
   const announcement = node('p', 'sr-only');
   if (screen) {
-    measureBars();
     announcement.setAttribute('role', 'status');
     announcement.dataset.snackbarAnnouncement = '';
     screen.after(announcement);
