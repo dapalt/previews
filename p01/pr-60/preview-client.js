@@ -14,7 +14,7 @@ const featureLabels = {
   mode: 'Zmiany ustawień propozycji',
   choice: 'Oznaczenia wyboru prezentu',
   unlock: 'Cofnięcia wyboru prezentu',
-  purchase: 'Oznaczenia zakupu prezentu',
+  strike: 'Skreślone pomysły',
   'food-add': 'Jedzenie: dodane pozycje',
   'food-claim': 'Jedzenie: zajęte pozycje',
   'food-release': 'Jedzenie: zwolnione pozycje',
@@ -39,14 +39,12 @@ export function recordMetric(event, person, action, body = {}, now = new Date())
 }
 
 function progressTotals(people) {
-  const peopleInState = state => people.filter(p => p.state === state).length;
   return {
     entered: people.filter(p => p.metrics?.visits > 0).length,
     pins: people.filter(p => p.pin || p.practicePinSet).length,
     revealed: people.filter(p => p.revealed).length,
     lists: people.filter(p => p.items?.length > 0).length,
-    chosen: peopleInState('selected') + peopleInState('bought'),
-    purchased: peopleInState('bought'),
+    chosen: people.filter(p => p.state === 'selected' || p.state === 'bought').length,
   };
 }
 
@@ -84,7 +82,7 @@ function activityDays(event) {
     .map(([date, { visits, actions }]) => ({ date, visits, actions }));
 }
 
-function displayAggregates({ features, distribution, ...counts }) {
+function displayAggregates({ features, distribution, purchased, ...counts }) {
   return {
     ...counts,
     features: Object.entries(featureLabels).filter(([key]) => Object.hasOwn(features, key))
@@ -116,7 +114,6 @@ const progressSeries = [
   ['revealed', 'Odkryli wynik losowania', 'Odkryty wynik losowania'],
   ['lists', 'Mają co najmniej jeden pomysł', 'Co najmniej jeden pomysł'],
   ['chosen', 'Wiedzą, co dadzą', 'Wybrany prezent'],
-  ['purchased', 'Oznaczyli prezent jako kupiony', 'Kupiony prezent'],
 ];
 const activitySeries = [['visits', 'Wejścia'], ['actions', 'Akcje']];
 const metricMeasure = (n, max) => {
@@ -442,8 +439,8 @@ export function previewStore(storage, scope, initial) {
   };
 }
 
-const check = (condition, message = 'Ta czynność nie jest teraz dostępna.') => {
-  if (!condition) throw new Error(message);
+const check = (condition, message = 'Ta czynność nie jest teraz dostępna.', field) => {
+  if (!condition) throw Object.assign(new Error(message), { field });
 };
 const value = (field, limit) => String(field ?? '').trim().slice(0, limit);
 const text = (field, limit) => {
@@ -516,15 +513,23 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       else me.items = me.items.filter(entry => entry !== item);
       break;
     }
+    case 'strike': {
+      const item = ownItem();
+      check(me.state === 'open' && item && !item.strikeComment);
+      const comment = String(fields.comment ?? '').replaceAll('\r\n', '\n').trim();
+      check(comment.length > 0 && comment.length <= 500, 'Sprawdź długość wpisanego tekstu.', 'comment');
+      item.strikeComment = comment;
+      break;
+    }
     case 'question': {
       const item = recipient?.items.find(item => item.id === fields.item);
-      check(item && recipient.state !== 'bought');
+      check(item && recipient.state === 'open');
       item.threads.push({ id, kind: 'question', question: text(fields.text, 700), createdAt: day, answers: [], unreadByOwner: true });
       break;
     }
     case 'reply': {
       const item = ownItem();
-      check(item && me.state !== 'bought');
+      check(item && me.state === 'open');
       const entry = { answer: value(fields.text, 1200), link: link(fields.link), createdAt: day };
       check(entry.answer || entry.link, 'Dodaj odpowiedź lub link.');
       const thread = item.threads.find(thread => thread.id === fields.thread && thread.kind === 'question');
@@ -561,12 +566,11 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       if (me.mode === 'none') me.suggestions = me.suggestions.filter(suggestion => suggestion.status !== 'pending');
       break;
     case 'choice':
-    case 'unlock':
-    case 'purchase': {
-      const [before, after] = { choice: ['open', 'selected'], unlock: ['selected', 'open'], purchase: ['selected', 'bought'] }[action];
-      check(recipient?.state === before);
-      recipient.state = after;
-      recipient.unlocked = action === 'unlock';
+    case 'unlock': {
+      const unlock = action === 'unlock';
+      check(recipient && (unlock ? recipient.state !== 'open' : recipient.state === 'open'));
+      recipient.state = unlock ? 'open' : 'selected';
+      recipient.unlocked = unlock;
       break;
     }
     case 'food-add':
@@ -633,9 +637,11 @@ const status = message => {
 };
 const date = day => day ? node('time', 'entry-date tiny', day.slice(0, 10)) : null;
 const ref = url => url ? node('p', 'small muted', url) : null;
-const presentIdea = item => node('div', 'gift-main',
-  node('span', 'gift-title', item.title), item.description && node('span', 'gift-desc multiline', item.description),
-  item.price && node('span', 'gift-price', item.price), date(ideaCreationDay(item.createdAt)));
+const presentIdea = item => {
+  const content = [node('span', 'gift-title', item.title), item.description && node('span', 'gift-desc multiline', item.description),
+    item.price && node('span', 'gift-price', item.price)];
+  return node('div', 'gift-main', ...(item.strikeComment ? [node('del', '', ...content)] : content), date(ideaCreationDay(item.createdAt)));
+};
 const field = (name, label, { max = 1200, initial = '', multiline = false, required = false, type = 'text' } = {}) => {
   const input = node(multiline ? 'textarea' : 'input');
   if (!multiline) input.type = type;
@@ -655,13 +661,30 @@ function form(label, fields, submit, extra) {
   const el = node('form', 'form', ...fields.map(([wrapper]) => wrapper), extra, error, save);
   el.method = 'post';
   el.autocomplete = 'off';
+  let invalidInput;
   el.addEventListener('submit', event => {
     event.preventDefault();
+    invalidInput?.removeAttribute('aria-invalid');
+    invalidInput?.removeAttribute('aria-describedby');
+    invalidInput = undefined;
+    error.removeAttribute('id');
+    error.textContent = '';
     try {
       submit(Object.fromEntries(new FormData(el)));
     } catch (err) {
       error.textContent = err.message;
-      error.focus();
+      const [wrapper, input] = fields.find(([, field]) => field.name === err.field) ?? [];
+      if (input) {
+        invalidInput = input;
+        error.id = 'preview-field-error';
+        wrapper.before(error);
+        input.setAttribute('aria-invalid', 'true');
+        input.setAttribute('aria-describedby', error.id);
+        input.focus();
+      } else {
+        save.before(error);
+        error.focus();
+      }
     }
   });
   return el;
@@ -882,8 +905,8 @@ function startPreview(data) {
       'item-' + item.id, context, presets);
   }
   function gift(item, owner, person) {
-    const open = person.state === 'open', writable = person.state !== 'bought';
-    const ownActions = owner && open;
+    const writable = person.state === 'open';
+    const ownActions = owner && writable;
     const remaining = ownActions ? ideaEditDeadline(item.createdAt) - Date.now() : 0;
     const editable = remaining > 0;
     const editState = (element, isOpen) => {
@@ -911,6 +934,11 @@ function startPreview(data) {
         editHint(ideaEditHint)), true),
       editState(node('div', 'gift-actions', lockedButton('Edytuj', ''), lockedButton('Usuń', 'danger-outline'),
         editHint(ideaEditExpired)), false),
+      !item.strikeComment && node('div', 'gift-actions', button('Skreśl pomysł', event => openForm('Skreśl pomysł',
+        [field('comment', 'Krótki komentarz', { max: 500, multiline: true, required: true })], 'Skreśl pomysł',
+        'strike', { item: item.id }, 'Skreślono pomysł.', 'item-' + item.id,
+        item.title + ' zostanie na liście jako skreślony. Osoba, która daje Ci prezent, zobaczy komentarz.',
+        null, null, event.currentTarget))),
     ] : !owner && writable ? [node('div', 'gift-actions', button('Zapytaj anonimowo', () => discuss('question', item)))] : [];
     const discussion = item.threads.map(thread => {
       if (thread.kind === 'note') return node('div', 'item-note', node('strong', '', 'Komentarz'),
@@ -927,7 +955,8 @@ function startPreview(data) {
           () => discuss('reply', item, thread))) : null);
       return owner ? mark(question, thread.id, question.firstElementChild) : question;
     });
-    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), ...discussion), ...controls);
+    const strikeNote = item.strikeComment && node('div', 'item-note', node('strong', '', 'Pomysł skreślony'), node('p', 'multiline', item.strikeComment));
+    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), strikeNote, ...discussion), ...controls);
     if (editable) card.dataset.ideaEditRemaining = remaining;
     card.id = 'item-' + item.id;
     return card;
@@ -949,8 +978,7 @@ function startPreview(data) {
       const card = node('article', 'suggestion-box', presentIdea(entry), ref(entry.link));
       if (!owner) {
         const label = entry.status === 'accepted' ? 'Przyjęta' : entry.status === 'rejected' ? 'Odrzucona' :
-          person.state === 'selected' ? 'Odpowiedź wstrzymana — lista jest zablokowana' :
-            person.state === 'bought' ? 'Zamknięta bez odpowiedzi' : 'Czeka na odpowiedź';
+          person.state === 'open' ? 'Czeka na odpowiedź' : 'Odpowiedź wstrzymana — lista jest zablokowana';
         card.append(node('strong', 'suggestion-status ' + entry.status, label));
         if (entry.comment) card.append(node('p', 'response-comment multiline', entry.comment));
       } else {
@@ -975,9 +1003,8 @@ function startPreview(data) {
     const title = node('h1', '', data.title);
     title.id = 'list-result';
     const intro = node('p', 'lead', 'Podpowiedz, co chcesz dostać.');
-    const stateNote = open ? (person.unlocked ? 'Twoja lista jest znowu odblokowana.' : '') :
-      person.state === 'selected' ? 'Twoja lista jest zablokowana. Nadal możesz odpowiadać na pytania.' :
-        'Prezent dla Ciebie jest już kupiony. Teraz czekamy na święta.';
+    const stateNote = open ? (person.unlocked && node('div', 'notice mt', node('h3', '', 'Twoja lista jest znowu odblokowana.'))) :
+      node('div', 'notice mt', node('h3', '', 'Prezent dla Ciebie jest już wybrany'), 'Lista, pytania i komentarze są tylko do odczytu.');
     const question = 'Czy przyjmujesz propozycje prezentów?';
     const savedMode = person.mode === 'none' ? 'none' : 'unlimited';
     const settings = node('fieldset', 'form-group preference-options', node('legend', '', question));
@@ -1008,7 +1035,7 @@ function startPreview(data) {
     optionPanel.id = 'suggestion-settings';
     const addIdea = open && node('div', 'mt', button('Dodaj pomysł', event => ideaForm('add', {}, event.currentTarget)));
     if (addIdea && !pending(person).length) addIdea.id = 'suggestion-result';
-    return [title, intro, stateNote && node('p', 'notice mt', stateNote),
+    return [title, intro, stateNote,
       open && person.items.length < 2 && node('p', 'mt-sm', 'Dodaj 2 lub 3 pomysły, wtedy trudniej zgadnąć, co dostaniesz.'),
       cards(person, true, 'Twoja lista jest pusta. Jeśli chcesz, dodaj pierwszy pomysł.'), !person.items.length && addIdea,
       open && pending(person).length && suggestions(person, true),
@@ -1029,14 +1056,10 @@ function startPreview(data) {
       }
     }, style);
     if (person.state === 'open') choice.append(node('h2', '', 'Wiesz już, co dasz?'),
-      node('p', '', 'Gdy wiesz, co dasz, dotknij „Wiem, co dam”. Lista zostanie zablokowana, a propozycje zamknięte. Możesz ją później odblokować. Nie zapisujemy, co wybierasz.'),
+      node('p', '', 'Gdy wiesz, co dasz, dotknij „Wiem, co dam”. Lista i rozmowy będą tylko do odczytu, a propozycje zostaną wstrzymane. Możesz odblokować listę. Nie zapisujemy, co wybierasz.'),
       node('div', 'mt-sm', change('choice', 'Wiem, co dam', null)));
-    else if (person.state === 'selected') choice.append(node('h2', '', 'Wiesz, co dasz'), node('p', '', 'Gotowe. Możesz zamknąć aplikację.'),
-      node('div', 'stack mt-sm', change('unlock', 'Zmieniam zdanie, odblokuj listę', 'Lista odblokowana.', 'quiet'),
-        button('Oznacz prezent jako kupiony', () => openForm('Oznaczyć prezent jako kupiony?', [], 'Tak, prezent jest kupiony',
-          'purchase', {}, null, 'choice',
-          'To opcjonalne. Tego nie da się cofnąć. Lista i pytania zamkną się dla Was obojga.'))));
-    else choice.append(node('h2', '', 'Prezent, który dasz, jest już kupiony.'), node('p', '', 'Teraz czekamy na święta.'));
+    else choice.append(node('h2', '', 'Wiesz, co dasz'), node('p', '', 'Gotowe. Możesz zamknąć aplikację.'),
+      node('div', 'mt-sm', change('unlock', 'Zmieniam zdanie, odblokuj listę', 'Lista odblokowana.', 'quiet')));
     return [title, person.state === 'open' && node('p', 'lead', 'Lista to podpowiedzi. Możesz też dać coś spoza listy.'),
       person.state !== 'open' && choice, section, person.state === 'open' && choice, suggestions(person, false)];
   }
