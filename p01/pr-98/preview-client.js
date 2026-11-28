@@ -531,6 +531,28 @@ export function previewHomeScreen() {
   });
 }
 
+export const foodFilterEmpty = 'Nie masz jeszcze żadnego dania';
+
+export function watchFoodFilter(root) {
+  const toggle = root.querySelector('[data-food-filter]');
+  if (!toggle) return;
+  const dishes = Array.from(root.querySelectorAll('#food-list .food-item'));
+  const empty = root.querySelector('[data-food-filter-empty]');
+  const buttons = Array.from(toggle.querySelectorAll('button[data-food-filter-value]'));
+  const show = mineOnly => {
+    for (const button of buttons) {
+      const active = (button.dataset.foodFilterValue === 'mine') === mineOnly;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+    for (const dish of dishes) dish.hidden = mineOnly && !dish.hasAttribute('data-food-mine');
+    if (empty) empty.hidden = !mineOnly || dishes.some(dish => !dish.hidden);
+  };
+  for (const button of buttons) button.addEventListener('click', () => show(button.dataset.foodFilterValue === 'mine'));
+  show(false);
+  toggle.hidden = false;
+}
+
 
 const storagePrefix = 'upominki-preview:';
 const warsawDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', dateStyle: 'short' });
@@ -1189,6 +1211,7 @@ function startPreview(data) {
       const row = node('div', 'food-row', node('div', 'food-info', node('strong', 'food-title', dish.title), node('span', 'food-status ' + type, label)));
       const article = node('article', 'food-item', row);
       article.id = 'food-item-' + dish.id;
+      if (mine) article.setAttribute('data-food-mine', '');
       if (!dish.organizerProvided && (mine || !name)) row.append(node('div', 'food-action', button(mine ? 'Zrezygnuj' : 'Zrobię to', () => {
         try {
           apply(mine ? 'food-release' : 'food-claim', { item: dish.id },
@@ -1199,6 +1222,22 @@ function startPreview(data) {
       }, mine ? 'secondary food-btn' : 'food-btn')));
       return article;
     });
+    if (dishes.length) {
+      const filter = node('div', 'sort-toggle food-filter', ...[['all', 'Wszystkie'], ['mine', 'Moje']].map(([value, label]) => {
+        const btn = node('button', 'sort-link', label);
+        btn.type = 'button';
+        btn.dataset.foodFilterValue = value;
+        return btn;
+      }));
+      filter.setAttribute('role', 'group');
+      filter.setAttribute('aria-label', 'Pokaż dania');
+      filter.setAttribute('data-food-filter', '');
+      filter.hidden = true;
+      const empty = node('div', 'empty mt-sm', node('p', '', foodFilterEmpty));
+      empty.setAttribute('data-food-filter-empty', '');
+      empty.hidden = true;
+      list.append(filter, empty);
+    }
     list.append(node('div', 'stack mt-sm', ...dishes));
     if (food.allowProposals) list.append(form('Dodaj pozycję', [field('title', 'Dodaj nową pozycję do listy', { max: 140, required: true })],
       values => apply('food-add', values, id => `Dodano danie: ${state.food.items.find(dish => dish.id === id).title}.`,
@@ -1292,6 +1331,7 @@ function startPreview(data) {
       stopEditTimers?.();
       screen.replaceChildren(...[hint, ...view()].filter(Boolean));
       stopEditTimers = watchIdeaEditWindows(screen);
+      watchFoodFilter(screen);
     }
     announcement.textContent = '';
     badge('list', unreadList(me()).length);

@@ -202,6 +202,7 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .feed-header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
 .sort-toggle{display:inline-flex;flex-wrap:wrap;gap:6px}
 .sort-link{display:inline-flex;align-items:center;min-height:48px;padding:6px 12px;border:1px solid var(--control-line);border-radius:10px;text-decoration:none;color:var(--ink);font-size:0.9375rem;font-weight:600;background:var(--surface)}
+.food-filter[hidden]{display:none}
 .sort-link.active{border-color:var(--green);background:var(--pale);color:var(--green);font-weight:700}
 .composer{display:grid;gap:6px}
 .composer label{font-size:1rem}
