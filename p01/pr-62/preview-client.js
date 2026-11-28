@@ -265,43 +265,39 @@ export function keepEditingFieldVisible() {
     root.style.removeProperty('--editing-height');
     delete root.dataset.keyboardOpen;
   };
-  const syncZoomedHeader = () => {
+  const editingState = () => {
     const field = document.activeElement;
-    const editing = field?.matches(editableFieldSelector);
+    const editing = Boolean(field?.matches(editableFieldSelector));
     const layoutHeight = root.clientHeight;
     const height = viewport?.height ?? layoutHeight;
     const scale = viewport?.scale ?? 1;
     const zoomedWithoutKeyboard = scale !== 1 && height * scale >= layoutHeight - 1;
-    if (editing && scale > 1 && !zoomedWithoutKeyboard) {
-      root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
-    } else {
-      root.style.removeProperty('--visual-viewport-top');
-    }
+    const keyboardInset = Math.max(0, layoutHeight - height);
+    const keyboardOpen = editing && !zoomedWithoutKeyboard && keyboardInset > 0;
+    return { field, editing, height, zoomedWithoutKeyboard, keyboardInset, keyboardOpen };
+  };
+  const syncEditingHeader = () => {
+    const { keyboardOpen } = editingState();
+    if (keyboardOpen) root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
+    else root.style.removeProperty('--visual-viewport-top');
   };
   const update = () => {
     frame = undefined;
-    const field = document.activeElement;
-    const editing = field?.matches(editableFieldSelector);
-    const layoutHeight = root.clientHeight;
-    const height = viewport?.height ?? layoutHeight;
-    const scale = viewport?.scale ?? 1;
-    const zoomedWithoutKeyboard = scale !== 1 && height * scale >= layoutHeight - 1;
+    const { field, editing, height, zoomedWithoutKeyboard, keyboardInset, keyboardOpen } = editingState();
     if (!editing || zoomedWithoutKeyboard) {
       clear();
       return;
     }
 
-    const keyboardInset = Math.max(0, layoutHeight - height);
-    const keyboardOpen = keyboardInset > 0;
     if (keyboardOpen) {
       root.dataset.keyboardOpen = '';
       root.style.setProperty('--keyboard-inset', keyboardInset + 'px');
+      root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
     } else {
       delete root.dataset.keyboardOpen;
       root.style.removeProperty('--keyboard-inset');
+      root.style.removeProperty('--visual-viewport-top');
     }
-    if (scale > 1) root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
-    else root.style.removeProperty('--visual-viewport-top');
 
     const top = Math.max(visualTop(), header?.getBoundingClientRect().bottom ?? 0) + 8;
     let bottom = visualTop() + height;
@@ -326,7 +322,7 @@ export function keepEditingFieldVisible() {
   document.addEventListener('input', schedule);
   window.addEventListener('resize', schedule);
   viewport?.addEventListener('resize', schedule);
-  viewport?.addEventListener('scroll', syncZoomedHeader);
+  viewport?.addEventListener('scroll', syncEditingHeader);
   schedule();
 }
 
@@ -757,9 +753,9 @@ function startPreview(data) {
       }
     });
   }
+  measureBars();
   const announcement = node('p', 'sr-only');
   if (screen) {
-    measureBars();
     announcement.setAttribute('role', 'status');
     announcement.dataset.snackbarAnnouncement = '';
     screen.after(announcement);
