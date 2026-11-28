@@ -205,6 +205,7 @@ ${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, pe
 }
 
 export const editableFieldSelector = ':is(textarea, input:is([type=text], [type=password], [type=search], [type=email], [type=url], [type=tel], [type=number], :not([type]))):not(:disabled, [readonly])';
+const keyboardThreshold = 150;
 
 function revealCaret(field) {
   if (field.scrollHeight <= field.clientHeight) return;
@@ -255,14 +256,11 @@ export function keepEditingFieldVisible() {
   const footer = document.querySelector('.nav, .ack-bar');
   let frame;
   let reveal = false;
+  const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  let layoutWidth = window.innerWidth;
+  let restingHeight = window.innerHeight;
 
   const visualTop = () => Math.max(0, viewport?.offsetTop ?? 0);
-  const clear = () => {
-    root.style.removeProperty('--visual-viewport-top');
-    root.style.removeProperty('--keyboard-inset');
-    root.style.removeProperty('--editing-height');
-    delete root.dataset.keyboardOpen;
-  };
   const editingState = () => {
     const field = document.activeElement;
     const editing = Boolean(field?.matches(editableFieldSelector));
@@ -271,12 +269,14 @@ export function keepEditingFieldVisible() {
     const scale = viewport?.scale ?? 1;
     const zoomedWithoutKeyboard = scale !== 1 && height * scale >= layoutHeight - 1;
     const keyboardInset = Math.max(0, layoutHeight - height);
-    const keyboardOpen = editing && !zoomedWithoutKeyboard && keyboardInset > 0;
+    const overlayKeyboard = layoutHeight - height * scale > keyboardThreshold;
+    const layoutResized = touchDevice && window.innerWidth === layoutWidth &&
+      restingHeight - window.innerHeight > keyboardThreshold;
+    const keyboardOpen = editing && (overlayKeyboard || layoutResized);
     return { field, editing, height, zoomedWithoutKeyboard, keyboardInset, keyboardOpen };
   };
   const syncEditingHeader = () => {
-    const { keyboardOpen } = editingState();
-    if (keyboardOpen) root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
+    if (root.hasAttribute('data-keyboard-open')) root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
     else root.style.removeProperty('--visual-viewport-top');
   };
   const update = () => {
@@ -284,21 +284,18 @@ export function keepEditingFieldVisible() {
     const requestedReveal = reveal;
     reveal = false;
     const { field, editing, height, zoomedWithoutKeyboard, keyboardInset, keyboardOpen } = editingState();
-    if (!editing || zoomedWithoutKeyboard) {
-      clear();
+    if (window.innerWidth !== layoutWidth || !editing || window.innerHeight > restingHeight) {
+      layoutWidth = window.innerWidth;
+      restingHeight = window.innerHeight;
+    }
+    root.toggleAttribute('data-keyboard-open', keyboardOpen);
+    syncEditingHeader();
+    if (keyboardOpen && keyboardInset > 1) root.style.setProperty('--keyboard-inset', keyboardInset + 'px');
+    else root.style.removeProperty('--keyboard-inset');
+    if (!editing || (!keyboardOpen && zoomedWithoutKeyboard)) {
+      root.style.removeProperty('--editing-height');
       return;
     }
-
-    if (keyboardOpen) {
-      root.dataset.keyboardOpen = '';
-      root.style.setProperty('--keyboard-inset', keyboardInset + 'px');
-      root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
-    } else {
-      delete root.dataset.keyboardOpen;
-      root.style.removeProperty('--keyboard-inset');
-      root.style.removeProperty('--visual-viewport-top');
-    }
-
     const top = Math.max(visualTop(), header?.getBoundingClientRect().bottom ?? 0) + 8;
     let bottom = visualTop() + height;
     const footerRect = footer?.getBoundingClientRect();
@@ -356,6 +353,28 @@ export function watchIdeaEditWindows(root) {
     return setTimeout(expire, Number(card.dataset.ideaEditRemaining));
   });
   return () => timers.forEach(clearTimeout);
+}
+
+export function trackFocusModality() {
+  const root = document.documentElement;
+  const storageKey = 'upominki:pointer-focus';
+  const setPointer = pointer => root.toggleAttribute('data-pointer-focus', pointer);
+  try {
+    setPointer(sessionStorage.getItem(storageKey) === '1');
+    sessionStorage.removeItem(storageKey);
+  } catch {
+    // The browser may block storage.
+  }
+  document.addEventListener('pointerdown', () => setPointer(true), true);
+  document.addEventListener('keydown', () => setPointer(false), true);
+  window.addEventListener('pagehide', () => {
+    try {
+      if (root.hasAttribute('data-pointer-focus')) sessionStorage.setItem(storageKey, '1');
+      else sessionStorage.removeItem(storageKey);
+    } catch {
+      // The browser may block storage.
+    }
+  });
 }
 
 export function measureBars() {
@@ -947,7 +966,7 @@ function startPreview(data) {
         'strike', { item: item.id }, 'Skreślono pomysł.', 'item-' + item.id,
         item.title + ' zostanie na liście jako skreślony. Osoba, która daje Ci prezent, zobaczy komentarz.',
         null, null, event.currentTarget))),
-    ] : !owner && writable ? [node('div', 'gift-actions', button('Zapytaj anonimowo', () => discuss('question', item)))] : [];
+    ] : !owner && writable ? [node('div', 'gift-actions', button('Dopytaj anonimowo', () => discuss('question', item)))] : [];
     const discussion = item.threads.map(thread => {
       if (thread.kind === 'note') return node('div', 'item-note', node('strong', '', 'Komentarz'),
         node('p', 'multiline', thread.answer), ref(thread.link), date(thread.createdAt));
@@ -1238,6 +1257,7 @@ function startPreview(data) {
 
 if (typeof document !== 'undefined') {
   keepEditingFieldVisible();
+  trackFocusModality();
   previewHomeScreen();
   const metadata = document.querySelector('meta[name="preview-data"]');
   if (metadata) startPreview(JSON.parse(metadata.content));
