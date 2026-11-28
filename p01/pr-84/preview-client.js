@@ -206,6 +206,8 @@ ${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, pe
 
 export const editableFieldSelector = ':is(textarea, input:is([type=text], [type=password], [type=search], [type=email], [type=url], [type=tel], [type=number], :not([type]))):not(:disabled, [readonly])';
 const isKeyboardGap = (gap, restingHeight) => gap > Math.max(100, restingHeight * 0.2);
+const viewportSettleDelay = 120;
+const minRevealResize = 24;
 
 function revealCaret(field) {
   if (field.scrollHeight <= field.clientHeight) return;
@@ -256,6 +258,13 @@ export function keepEditingFieldVisible() {
   const footer = document.querySelector('.nav, .ack-bar');
   let frame;
   let reveal = false;
+  let keyboardWasOpen = false;
+  let lastRevealWidth;
+  let lastRevealHeight;
+  let manualScroll = false;
+  let touching = false;
+  let settleTimer;
+  let viewportSettled = false;
   const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
   let layoutWidth = window.innerWidth;
   let layoutHeight = window.innerHeight;
@@ -271,7 +280,9 @@ export function keepEditingFieldVisible() {
   const update = () => {
     frame = undefined;
     const requestedReveal = reveal;
+    const settled = viewportSettled;
     reveal = false;
+    viewportSettled = false;
     const field = document.activeElement;
     const editing = Boolean(field?.matches(editableFieldSelector));
     const width = window.innerWidth;
@@ -291,8 +302,11 @@ export function keepEditingFieldVisible() {
     const scale = viewport?.scale ?? 1;
     const scaledGap = clientHeight - height * scale;
     const zoomedWithoutKeyboard = scale !== 1 && scaledGap <= 1;
-    const keyboardInset = Math.max(0, clientHeight - height);
+    const visibleBottom = visualTop() + height;
+    const keyboardInset = Math.max(0, clientHeight - visibleBottom);
     const keyboardOpen = editing && (layoutKeyboardOpen || isKeyboardGap(scaledGap, clientHeight));
+    const openingKeyboard = keyboardOpen && !keyboardWasOpen;
+    keyboardWasOpen = keyboardOpen;
     const restoreScroll = wasLayoutKeyboardOpen && !keyboardOpen && sameWidth &&
       innerHeight > layoutHeight && footer?.matches('.nav');
     if (layoutKeyboardOpen && (!wasLayoutKeyboardOpen || !sameWidth)) editingScrollY = window.scrollY;
@@ -300,15 +314,25 @@ export function keepEditingFieldVisible() {
     layoutHeight = innerHeight;
     root.toggleAttribute('data-keyboard-open', keyboardOpen);
     syncEditingHeader();
-    if (keyboardOpen && keyboardInset > 1) root.style.setProperty('--keyboard-inset', keyboardInset + 'px');
-    else root.style.removeProperty('--keyboard-inset');
+    if (!keyboardOpen) {
+      root.style.removeProperty('--keyboard-inset');
+      manualScroll = false;
+    } else if (openingKeyboard || settled) {
+      if (keyboardInset > 1) root.style.setProperty('--keyboard-inset', keyboardInset + 'px');
+      else root.style.removeProperty('--keyboard-inset');
+    }
     if (restoreScroll) window.scrollTo({ top: editingScrollY, behavior: 'instant' });
     if (!editing || (!keyboardOpen && zoomedWithoutKeyboard)) {
       root.style.removeProperty('--editing-height');
       return;
     }
+    const resizedWhileEditing = settled && !manualScroll &&
+      (width !== lastRevealWidth || Math.abs(height - lastRevealHeight) >= minRevealResize);
+    if (keyboardOpen && !openingKeyboard && !requestedReveal && !resizedWhileEditing) return;
+    lastRevealWidth = width;
+    lastRevealHeight = height;
     const top = Math.max(visualTop(), header?.getBoundingClientRect().bottom ?? 0) + 8;
-    let bottom = visualTop() + height;
+    let bottom = visibleBottom;
     const footerRect = footer?.getBoundingClientRect();
     if (footerRect && footerRect.bottom > top) bottom = Math.min(bottom, footerRect.top);
     bottom -= 8;
@@ -330,20 +354,57 @@ export function keepEditingFieldVisible() {
     if (frame === undefined) frame = requestAnimationFrame(update);
   };
   const scheduleReveal = () => {
+    manualScroll = false;
     reveal = true;
+    schedule();
+  };
+  const settleViewport = () => {
+    clearTimeout(settleTimer);
+    settleTimer = undefined;
+    viewportSettled = false;
+    if (!keyboardWasOpen || touching) return;
+    settleTimer = setTimeout(() => {
+      settleTimer = undefined;
+      viewportSettled = true;
+      schedule();
+    }, viewportSettleDelay);
+  };
+  const resize = () => {
+    settleViewport();
     schedule();
   };
   document.addEventListener('focusin', scheduleReveal);
   document.addEventListener('focusout', schedule);
   document.addEventListener('input', scheduleReveal);
+  const passive = { passive: true };
+  window.addEventListener('touchstart', () => {
+    touching = true;
+    settleViewport();
+  }, passive);
+  window.addEventListener('touchmove', event => {
+    if (keyboardWasOpen && event.touches.length === 1) manualScroll = true;
+  }, passive);
+  const finishTouch = event => {
+    touching = event.touches.length > 0;
+    settleViewport();
+  };
+  window.addEventListener('touchend', finishTouch, passive);
+  window.addEventListener('touchcancel', finishTouch, passive);
+  window.addEventListener('wheel', event => {
+    if (keyboardWasOpen && event.deltaY && !event.ctrlKey) manualScroll = true;
+  }, passive);
   window.addEventListener('scroll', () => {
     if (layoutKeyboardOpen && window.innerWidth === layoutWidth && window.innerHeight === layoutHeight) {
       editingScrollY = window.scrollY;
     }
+    if (settleTimer !== undefined) settleViewport();
+  }, passive);
+  window.addEventListener('resize', resize);
+  viewport?.addEventListener('resize', resize);
+  viewport?.addEventListener('scroll', () => {
+    syncEditingHeader();
+    settleViewport();
   });
-  window.addEventListener('resize', schedule);
-  viewport?.addEventListener('resize', schedule);
-  viewport?.addEventListener('scroll', syncEditingHeader);
   scheduleReveal();
 }
 
@@ -569,13 +630,13 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
     }
     case 'question': {
       const item = recipient?.items.find(item => item.id === fields.item);
-      check(item && recipient.state === 'open');
+      check(item && recipient.state === 'open' && !item.strikeComment);
       item.threads.push({ id, kind: 'question', question: text(fields.text, 700), createdAt: day, answers: [], unreadByOwner: true });
       break;
     }
     case 'reply': {
       const item = ownItem();
-      check(item && me.state === 'open');
+      check(item && me.state === 'open' && !item.strikeComment);
       const entry = { answer: value(fields.text, 1200), link: link(fields.link), createdAt: day };
       check(entry.answer || entry.link, 'Dodaj odpowiedź lub link.');
       const thread = item.threads.find(thread => thread.id === fields.thread && thread.kind === 'question');
@@ -952,6 +1013,8 @@ function startPreview(data) {
   }
   function gift(item, owner, person) {
     const writable = person.state === 'open';
+    const struck = Boolean(item.strikeComment);
+    const discussionOpen = writable && !struck;
     const ownActions = owner && writable;
     const remaining = ownActions ? ideaEditDeadline(item.createdAt) - Date.now() : 0;
     const editable = remaining > 0;
@@ -980,16 +1043,18 @@ function startPreview(data) {
         editHint(ideaEditHint)), true),
       editState(node('div', 'gift-actions', lockedButton('Edytuj', ''), lockedButton('Usuń', 'danger-outline'),
         editHint(ideaEditExpired)), false),
-      !item.strikeComment && node('div', 'gift-actions', button('Skreśl pomysł', event => openForm('Skreśl pomysł',
+      !struck && node('div', 'gift-actions', button('Skreśl pomysł', event => openForm('Skreśl pomysł',
         [field('comment', 'Krótki komentarz', { max: 500, multiline: true, required: true })], 'Skreśl pomysł',
         'strike', { item: item.id }, 'Skreślono pomysł.', 'item-' + item.id,
         item.title + ' zostanie na liście jako skreślony. Osoba, która daje Ci prezent, zobaczy komentarz.',
         null, null, event.currentTarget))),
-    ] : !owner && writable ? [node('div', 'gift-actions', button('Dopytaj anonimowo', () => discuss('question', item)))] : [];
+    ] : !owner && discussionOpen ? [node('div', 'gift-actions', button('Dopytaj anonimowo', () => discuss('question', item)))] : [];
+    const closedComments = struck && node('div', 'gift-actions', node('p', 'discussion-closed', 'Pomysł nieaktualny, komentarze zamknięte'));
     const discussion = item.threads.map(thread => {
-      if (thread.kind === 'note') return node('div', 'item-note', node('strong', '', 'Komentarz'),
+      const closed = struck ? ' closed-comment' : '';
+      if (thread.kind === 'note') return node('div', 'item-note' + closed, node('strong', '', 'Komentarz'),
         node('p', 'multiline', thread.answer), ref(thread.link), date(thread.createdAt));
-      const question = node('div', 'question', node('strong', '', owner ? 'Anonimowe pytanie:' : 'Twoje anonimowe pytanie:'),
+      const question = node('div', 'question' + closed, node('strong', '', owner ? 'Anonimowe pytanie:' : 'Twoje anonimowe pytanie:'),
         node('p', 'multiline', thread.question), date(thread.createdAt),
         ...thread.answers.map(answer => {
           const reply = node('div', 'answer', node('strong', '', 'Odpowiedź:'),
@@ -997,12 +1062,12 @@ function startPreview(data) {
           return owner ? reply : mark(reply, answer.id, reply.firstElementChild);
         }),
         thread.answers.length ? null : node('p', 'question-status', 'Brak odpowiedzi'),
-        owner && writable ? node('div', 'mt-sm', button(thread.answers.length ? 'Dopisz odpowiedź' : 'Odpowiedz',
+        owner && discussionOpen ? node('div', 'mt-sm', button(thread.answers.length ? 'Dopisz odpowiedź' : 'Odpowiedz',
           () => discuss('reply', item, thread))) : null);
       return owner ? mark(question, thread.id, question.firstElementChild) : question;
     });
-    const strikeNote = item.strikeComment && node('div', 'item-note', node('strong', '', 'Pomysł skreślony'), node('p', 'multiline', item.strikeComment));
-    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), strikeNote, ...discussion), ...controls);
+    const strikeNote = struck && node('div', 'item-note', node('strong', '', 'Pomysł skreślony'), node('p', 'multiline', item.strikeComment));
+    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), strikeNote, ...discussion), ...controls, closedComments);
     if (editable) card.dataset.ideaEditRemaining = remaining;
     card.id = 'item-' + item.id;
     return card;
@@ -1017,7 +1082,10 @@ function startPreview(data) {
       section.firstElementChild.id = 'suggestion-result';
       section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
     }
-    else if (maySuggest(person)) section.append(node('div', 'mt-sm', button('Zaproponuj pomysł', () => ideaForm('suggest'))));
+    else if (maySuggest(person)) section.append(
+      node('p', 'small mt-sm', 'Możesz anonimowo zapytać, czy Twój pomysł się podoba.'),
+      node('div', 'mt-sm', button('Zaproponuj pomysł', () => ideaForm('suggest'))),
+    );
     else if (person.state === 'open') section.append(node('div', 'notice mt-sm',
       node('h3', '', 'Ta osoba nie przyjmuje teraz propozycji.'), node('p', '', 'Oczekujące propozycje usunięto.')));
     section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
