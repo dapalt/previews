@@ -1108,6 +1108,8 @@ function startPreview(data) {
       if (entries.length) {
         section.firstElementChild.id = 'suggestion-result';
         section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
+      } else {
+        section.append(node('p', 'small mt-sm', 'Brak nowych propozycji.'));
       }
     }
     else if (maySuggest(person)) section.append(
