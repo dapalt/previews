@@ -240,6 +240,14 @@ textarea:focus{min-height:min(var(--textarea-min-height,120px),var(--editing-hei
 .suggestion-status.rejected{color:var(--muted)}
 .suggestion-box{padding:20px;border:1px solid var(--line);border-radius:13px}
 .suggestion-box .gift-main{padding:0}
+.rejected-toggle{display:inline-flex;align-items:center;min-height:48px;padding:6px 0;color:var(--muted);font-size:0.9375rem;font-weight:600;text-decoration:underline;cursor:pointer;list-style:none}
+.rejected-toggle::-webkit-details-marker{display:none}
+.rejected-hide,.rejected-suggestions[open] .rejected-show{display:none}
+.rejected-suggestions[open] .rejected-hide{display:inline}
+.rejected-suggestion{background:var(--bg);color:var(--muted)}
+.rejected-suggestion .gift-price,.rejected-suggestion .item-link{color:var(--muted)}
+.rejected-suggestion .suggestion-status.rejected{background:var(--surface);border:1px solid var(--line)}
+.rejected-suggestion .response-comment{background:var(--surface);border:1px solid var(--line)}
 .new-activity{--new-bg:#f3e9ff;--new-ink:#56288b;background:var(--new-bg);border:1px solid var(--new-ink);border-inline-start-width:4px;border-radius:10px}
 .question.new-activity,.answer.new-activity{padding:12px}
 .new-label{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--new-ink);color:var(--new-bg);font-size:0.9375rem;font-weight:700}

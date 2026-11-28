@@ -687,6 +687,7 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       suggestion.status = fields.decision;
       suggestion.unreadByGiver = true;
       suggestion.comment = value(fields.comment, 500);
+      if (suggestion.comment) suggestion.commentCreatedAt = day;
       if (fields.decision === 'accepted') me.items.push(newIdea(suggestion));
       break;
     }
@@ -878,6 +879,7 @@ function startPreview(data) {
   const me = () => state.people.find(person => person.id === data.actor);
   const recipient = () => state.people.find(person => person.id === me().recipient);
   const pending = person => person.suggestions.filter(s => s.status === 'pending');
+  const rejected = person => person.suggestions.filter(s => s.status === 'rejected');
   const mark = (el, id, after) => {
     if (openActivity.has(id)) {
       el.classList.add('new-activity');
@@ -1099,11 +1101,14 @@ function startPreview(data) {
     ...(person.items.length ? person.items.map(item => gift(item, owner, person)) : [node('div', 'empty', empty)]));
   function suggestions(person, owner) {
     const entries = owner ? pending(person) : person.suggestions;
+    const rejectedEntries = owner ? rejected(person) : [];
     const section = node('section', 'section-gap', node('h2', '', owner ? 'Propozycje od osoby, która daje Ci prezent' : 'Twoje propozycje'));
     section.id = owner ? 'received-suggestions' : 'suggestions';
     if (owner) {
-      section.firstElementChild.id = 'suggestion-result';
-      section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
+      if (entries.length) {
+        section.firstElementChild.id = 'suggestion-result';
+        section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
+      }
     }
     else if (maySuggest(person)) section.append(
       node('p', 'small mt-sm', 'Możesz anonimowo zapytać, czy Twój pomysł się podoba.'),
@@ -1111,7 +1116,7 @@ function startPreview(data) {
     );
     else if (person.state === 'open') section.append(node('div', 'notice mt-sm',
       node('h3', '', 'Ta osoba nie przyjmuje teraz propozycji.'), node('p', '', 'Oczekujące propozycje usunięto.')));
-    section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
+    if (entries.length || !owner) section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
       const card = node('article', 'suggestion-box', presentIdea(entry), ref(entry.link));
       if (!owner) {
         const label = entry.status === 'accepted' ? 'Przyjęta' : entry.status === 'rejected' ? 'Odrzucona' :
@@ -1133,6 +1138,18 @@ function startPreview(data) {
       }
       return mark(card, entry.id);
     })));
+    if (owner && rejectedEntries.length) {
+      const toggle = node('summary', 'rejected-toggle',
+        node('span', 'rejected-show', `Pokaż odrzucone (${rejectedEntries.length})`),
+        node('span', 'rejected-hide', 'Ukryj odrzucone'));
+      const list = node('div', 'stack mt-sm', ...rejectedEntries.map(entry => {
+        const card = node('article', 'suggestion-box rejected-suggestion', presentIdea(entry), ref(entry.link));
+        card.append(node('strong', 'suggestion-status rejected', 'Odrzucona'));
+        if (entry.comment) card.append(node('div', 'response-comment', node('p', 'multiline', entry.comment), date(entry.commentCreatedAt)));
+        return card;
+      }));
+      section.append(node('details', 'rejected-suggestions mt-sm', toggle, list));
+    }
     return section;
   }
   function list() {
@@ -1175,7 +1192,7 @@ function startPreview(data) {
     return [title, intro, stateNote,
       open && person.items.length < 2 && node('p', 'mt-sm', 'Dodaj 2 lub 3 pomysły, wtedy trudniej zgadnąć, co dostaniesz.'),
       cards(person, true, 'Twoja lista jest pusta. Jeśli chcesz, dodaj pierwszy pomysł.'), !person.items.length && addIdea,
-      open && pending(person).length && suggestions(person, true),
+      open && (pending(person).length || rejected(person).length) && suggestions(person, true),
       person.items.length > 0 && addIdea, open && optionPanel];
   }
   function draw() {
