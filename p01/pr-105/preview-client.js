@@ -383,6 +383,9 @@ export function keepEditingFieldVisible() {
   document.addEventListener('focusin', scheduleReveal);
   document.addEventListener('focusout', schedule);
   document.addEventListener('input', scheduleReveal);
+  document.addEventListener('paste', event => {
+    if (keyboardWasOpen && event.target.dataset?.textareaLimit && !event.defaultPrevented) scheduleReveal();
+  });
   const passive = { passive: true };
   window.addEventListener('touchstart', () => {
     touching = true;
