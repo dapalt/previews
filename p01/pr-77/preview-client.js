@@ -205,7 +205,7 @@ ${metricsTable(['Funkcja', 'Użycia', 'Osoby'], features.map(({ label, total, pe
 }
 
 export const editableFieldSelector = ':is(textarea, input:is([type=text], [type=password], [type=search], [type=email], [type=url], [type=tel], [type=number], :not([type]))):not(:disabled, [readonly])';
-const keyboardThreshold = 150;
+const isKeyboardGap = (gap, restingHeight) => gap > Math.max(100, restingHeight * 0.2);
 
 function revealCaret(field) {
   if (field.scrollHeight <= field.clientHeight) return;
@@ -258,23 +258,12 @@ export function keepEditingFieldVisible() {
   let reveal = false;
   const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
   let layoutWidth = window.innerWidth;
-  let restingHeight = window.innerHeight;
+  let layoutHeight = window.innerHeight;
+  let restingHeight = layoutHeight;
+  let layoutKeyboardOpen = false;
+  let editingScrollY;
 
   const visualTop = () => Math.max(0, viewport?.offsetTop ?? 0);
-  const editingState = () => {
-    const field = document.activeElement;
-    const editing = Boolean(field?.matches(editableFieldSelector));
-    const layoutHeight = root.clientHeight;
-    const height = viewport?.height ?? layoutHeight;
-    const scale = viewport?.scale ?? 1;
-    const zoomedWithoutKeyboard = scale !== 1 && height * scale >= layoutHeight - 1;
-    const keyboardInset = Math.max(0, layoutHeight - height);
-    const overlayKeyboard = layoutHeight - height * scale > keyboardThreshold;
-    const layoutResized = touchDevice && window.innerWidth === layoutWidth &&
-      restingHeight - window.innerHeight > keyboardThreshold;
-    const keyboardOpen = editing && (overlayKeyboard || layoutResized);
-    return { field, editing, height, zoomedWithoutKeyboard, keyboardInset, keyboardOpen };
-  };
   const syncEditingHeader = () => {
     if (root.hasAttribute('data-keyboard-open')) root.style.setProperty('--visual-viewport-top', visualTop() + 'px');
     else root.style.removeProperty('--visual-viewport-top');
@@ -283,15 +272,37 @@ export function keepEditingFieldVisible() {
     frame = undefined;
     const requestedReveal = reveal;
     reveal = false;
-    const { field, editing, height, zoomedWithoutKeyboard, keyboardInset, keyboardOpen } = editingState();
-    if (window.innerWidth !== layoutWidth || !editing || window.innerHeight > restingHeight) {
-      layoutWidth = window.innerWidth;
-      restingHeight = window.innerHeight;
+    const field = document.activeElement;
+    const editing = Boolean(field?.matches(editableFieldSelector));
+    const width = window.innerWidth;
+    const innerHeight = window.innerHeight;
+    const sameWidth = width === layoutWidth;
+    const wasLayoutKeyboardOpen = layoutKeyboardOpen;
+    if (!sameWidth) {
+      restingHeight = editing && wasLayoutKeyboardOpen ? layoutWidth : innerHeight;
     }
+    layoutKeyboardOpen = touchDevice && editing && isKeyboardGap(restingHeight - innerHeight, restingHeight);
+    if (!editing || innerHeight > restingHeight || (wasLayoutKeyboardOpen && !layoutKeyboardOpen)) {
+      restingHeight = innerHeight;
+    }
+
+    const clientHeight = root.clientHeight;
+    const height = viewport?.height ?? clientHeight;
+    const scale = viewport?.scale ?? 1;
+    const scaledGap = clientHeight - height * scale;
+    const zoomedWithoutKeyboard = scale !== 1 && scaledGap <= 1;
+    const keyboardInset = Math.max(0, clientHeight - height);
+    const keyboardOpen = editing && (layoutKeyboardOpen || isKeyboardGap(scaledGap, clientHeight));
+    const restoreScroll = wasLayoutKeyboardOpen && !keyboardOpen && sameWidth &&
+      innerHeight > layoutHeight && footer?.matches('.nav');
+    if (layoutKeyboardOpen && (!wasLayoutKeyboardOpen || !sameWidth)) editingScrollY = window.scrollY;
+    layoutWidth = width;
+    layoutHeight = innerHeight;
     root.toggleAttribute('data-keyboard-open', keyboardOpen);
     syncEditingHeader();
     if (keyboardOpen && keyboardInset > 1) root.style.setProperty('--keyboard-inset', keyboardInset + 'px');
     else root.style.removeProperty('--keyboard-inset');
+    if (restoreScroll) window.scrollTo({ top: editingScrollY, behavior: 'instant' });
     if (!editing || (!keyboardOpen && zoomedWithoutKeyboard)) {
       root.style.removeProperty('--editing-height');
       return;
@@ -309,7 +320,10 @@ export function keepEditingFieldVisible() {
     if (!keyboardOpen && !requestedReveal) return;
     const rect = field.getBoundingClientRect();
     const delta = rect.top < top ? rect.top - top : Math.max(0, rect.bottom - bottom);
-    if (delta) window.scrollBy({ top: delta, behavior: 'instant' });
+    if (delta) {
+      window.scrollBy({ top: delta, behavior: 'instant' });
+      if (layoutKeyboardOpen) editingScrollY = window.scrollY;
+    }
   };
 
   const schedule = () => {
@@ -322,6 +336,11 @@ export function keepEditingFieldVisible() {
   document.addEventListener('focusin', scheduleReveal);
   document.addEventListener('focusout', schedule);
   document.addEventListener('input', scheduleReveal);
+  window.addEventListener('scroll', () => {
+    if (layoutKeyboardOpen && window.innerWidth === layoutWidth && window.innerHeight === layoutHeight) {
+      editingScrollY = window.scrollY;
+    }
+  });
   window.addEventListener('resize', schedule);
   viewport?.addEventListener('resize', schedule);
   viewport?.addEventListener('scroll', syncEditingHeader);
