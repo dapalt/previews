@@ -535,7 +535,7 @@ export const foodFilterEmpty = 'Nie masz jeszcze żadnego dania';
 
 export function watchFoodFilter(root) {
   const toggle = root.querySelector('[data-food-filter]');
-  if (!toggle) return;
+  if (!toggle) return null;
   const dishes = Array.from(root.querySelectorAll('#food-list .food-item'));
   const empty = root.querySelector('[data-food-filter-empty]');
   const buttons = Array.from(toggle.querySelectorAll('button[data-food-filter-value]'));
@@ -551,6 +551,7 @@ export function watchFoodFilter(root) {
   for (const button of buttons) button.addEventListener('click', () => show(button.dataset.foodFilterValue === 'mine'));
   show(false);
   toggle.hidden = false;
+  return () => show(false);
 }
 
 
@@ -1249,7 +1250,7 @@ function startPreview(data) {
       btn.addEventListener('click', () => {
         oldest = asc;
         render();
-        document.querySelector('.sort-link.active').focus();
+        document.querySelector('#food-feed .sort-link.active').focus();
       });
       return btn;
     }));
