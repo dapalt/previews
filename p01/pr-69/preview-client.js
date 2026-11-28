@@ -406,8 +406,8 @@ export function previewStore(storage, scope, initial) {
   };
 }
 
-const check = (condition, message = 'Ta czynność nie jest teraz dostępna.') => {
-  if (!condition) throw new Error(message);
+const check = (condition, message = 'Ta czynność nie jest teraz dostępna.', field) => {
+  if (!condition) throw Object.assign(new Error(message), { field });
 };
 const value = (field, limit) => String(field ?? '').trim().slice(0, limit);
 const text = (field, limit) => {
@@ -483,8 +483,8 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
     case 'strike': {
       const item = ownItem();
       check(me.state === 'open' && item && !item.strikeComment);
-      const comment = String(fields.comment ?? '').trim();
-      check(comment.length > 0 && comment.length <= 500, 'Sprawdź długość wpisanego tekstu.');
+      const comment = String(fields.comment ?? '').replaceAll('\r\n', '\n').trim();
+      check(comment.length > 0 && comment.length <= 500, 'Sprawdź długość wpisanego tekstu.', 'comment');
       item.strikeComment = comment;
       break;
     }
@@ -628,13 +628,30 @@ function form(label, fields, submit, extra) {
   const el = node('form', 'form', ...fields.map(([wrapper]) => wrapper), extra, error, save);
   el.method = 'post';
   el.autocomplete = 'off';
+  let invalidInput;
   el.addEventListener('submit', event => {
     event.preventDefault();
+    invalidInput?.removeAttribute('aria-invalid');
+    invalidInput?.removeAttribute('aria-describedby');
+    invalidInput = undefined;
+    error.removeAttribute('id');
+    error.textContent = '';
     try {
       submit(Object.fromEntries(new FormData(el)));
     } catch (err) {
       error.textContent = err.message;
-      error.focus();
+      const [wrapper, input] = fields.find(([, field]) => field.name === err.field) ?? [];
+      if (input) {
+        invalidInput = input;
+        error.id = 'preview-field-error';
+        wrapper.before(error);
+        input.setAttribute('aria-invalid', 'true');
+        input.setAttribute('aria-describedby', error.id);
+        input.focus();
+      } else {
+        save.before(error);
+        error.focus();
+      }
     }
   });
   return el;
