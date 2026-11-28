@@ -343,7 +343,14 @@ export function keepEditingFieldVisible() {
     if (field.tagName === 'TEXTAREA' && field.clientHeight < previousHeight) revealCaret(field);
     if (!keyboardOpen && !requestedReveal) return;
     const rect = field.getBoundingClientRect();
-    const delta = rect.top < top ? rect.top - top : Math.max(0, rect.bottom - bottom);
+    const help = keyboardOpen && field.dataset.textareaLimit
+      ? document.getElementById(field.dataset.textareaLimit)?.getBoundingClientRect() : null;
+    const groupTop = help ? Math.min(rect.top, help.top) : rect.top;
+    const groupBottom = help ? Math.max(rect.bottom, help.bottom) : rect.bottom;
+    const showHelp = groupBottom - groupTop <= bottom - top;
+    const revealTop = showHelp ? groupTop : rect.top;
+    const revealBottom = showHelp ? groupBottom : rect.bottom;
+    const delta = revealTop < top ? revealTop - top : Math.max(0, revealBottom - bottom);
     if (delta) {
       window.scrollBy({ top: delta, behavior: 'instant' });
       if (layoutKeyboardOpen) editingScrollY = window.scrollY;
@@ -531,23 +538,37 @@ export function previewHomeScreen() {
   });
 }
 
-export function textareaLimitText(length, max) {
+export function textareaLimitText(length, max, clippedPaste = false) {
   if (length > max) return `${length} / ${max} znaków — przekroczono limit.`;
   if (length === max) return `${length} / ${max} znaków — osiągnięto limit.`;
+  if (clippedPaste) return `${length} / ${max} znaków — wklejony tekst nie zmieścił się w całości.`;
   if (length >= max * 0.9) return `${length} / ${max} znaków`;
   return `Limit: ${max} znaków`;
 }
 
 export function watchTextareaLimits(root) {
+  const clippedPastes = new WeakSet();
   const update = field => {
     const helpId = field.dataset?.textareaLimit;
     if (!helpId) return;
     const help = root.getElementById(helpId);
-    const message = textareaLimitText(field.value.length, field.maxLength);
+    const message = textareaLimitText(field.value.length, field.maxLength, clippedPastes.has(field));
     if (help.textContent !== message) help.textContent = message;
   };
   for (const field of root.querySelectorAll('[data-textarea-limit]')) update(field);
-  root.addEventListener('input', event => update(event.target));
+  root.addEventListener('paste', event => {
+    const field = event.target;
+    if (!field.dataset?.textareaLimit || field.readOnly || field.disabled || event.defaultPrevented) return;
+    const text = event.clipboardData?.getData('text/plain') ?? '';
+    const available = field.maxLength - field.value.length + field.selectionEnd - field.selectionStart;
+    if (text.replace(/\r\n?/g, '\n').length > available) clippedPastes.add(field);
+    else clippedPastes.delete(field);
+    update(field);
+  });
+  root.addEventListener('input', event => {
+    if (event.inputType !== 'insertFromPaste') clippedPastes.delete(event.target);
+    update(event.target);
+  });
   root.addEventListener('focusin', event => update(event.target));
 }
 
