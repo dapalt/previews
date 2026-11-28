@@ -35,8 +35,11 @@ svg{vertical-align:middle;flex-shrink:0}
 .page.no-nav{padding-bottom:calc(var(--bottom-bar-height,0px) + 2rem + env(safe-area-inset-bottom))}
 .page.no-nav:has(.ack-bar){padding-bottom:calc(var(--bottom-bar-height,8rem) + 1rem + env(safe-area-inset-bottom))}
 .ack-bar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(100%,620px);padding:10px 25px max(10px,env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--line);z-index:10}
-.wordmark{font:2rem/1.2 Georgia,serif;display:flex;align-items:center;gap:8px;margin-bottom:35px;color:var(--green)}
-.wordmark .icon{width:29px;height:29px}
+.home-screen-identity{display:grid;grid-template-columns:64px minmax(0,1fr);align-items:center;gap:14px}
+.home-screen-identity img{border-radius:14px}
+.home-screen-identity strong{display:block;font-size:1.25rem;line-height:1.35;overflow-wrap:anywhere}
+.home-screen-identity p{margin-top:4px}
+.home-screen-entry{margin-bottom:20px}
 .lead{font-size:1.1875rem;color:var(--muted);margin-top:16px}
 .small{font-size:1.0625rem;color:var(--muted);line-height:1.5}
 .tiny{font-size:0.8125rem;color:var(--muted)}
