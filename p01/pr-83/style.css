@@ -128,6 +128,8 @@ svg{vertical-align:middle;flex-shrink:0}
 .closed-comment .answer{border-left-color:var(--line)}
 .closed-comment .item-link{color:var(--muted)}
 .item-note.closed-comment{background:var(--bg)}
+.closed-comment.new-activity,.closed-comment .new-activity{--new-bg:var(--bg);--new-ink:var(--muted);border-color:var(--line);border-inline-start-color:var(--muted)}
+.closed-comment .new-label{background:var(--muted);color:var(--bg)}
 .discussion-closed{color:var(--muted);font-size:0.9375rem;margin:0}
 .gift-actions{display:flex;flex-wrap:wrap;gap:8px;border-top:1px solid var(--line);padding:12px 20px;background:var(--bg)}
 .gift-actions .btn{flex:1 1 auto;width:auto;min-height:48px;padding:9px 12px;font-size:1.0625rem}
