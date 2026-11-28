@@ -100,7 +100,8 @@ svg{vertical-align:middle;flex-shrink:0}
 .empty p{font-size:1.0625rem;color:var(--muted);margin-top:10px}
 .empty p:first-child{margin-top:0}
 .budget-context{display:inline-block;margin-top:14px;color:var(--green);background:var(--pale);padding:6px 10px;border-radius:8px;font-size:1.0625rem}
-.recipient-title{border-inline-start:5px solid var(--green);padding-inline-start:14px}
+.recipient-title{border-inline-start:5px solid var(--green);border-radius:14px;padding-inline-start:14px;margin-block-end:8px}
+.recipient-title:focus-visible{outline-offset:6px}
 .recipient-title .recipient-name{display:block;font-size:2.6875rem;line-height:1.15;margin-top:7px}
 .recipient-title .task{font-size:1.4375rem;letter-spacing:-.025em}
 .choice-panel{padding:22px;background:var(--pale);border:1px solid var(--line);border-radius:14px}
