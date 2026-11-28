@@ -408,30 +408,120 @@ export function keepEditingFieldVisible() {
   scheduleReveal();
 }
 
-const ideaEditMinutes = 5;
-const ideaEditWindow = ideaEditMinutes * 60_000;
+const unitMs = { seconds: 1_000, minutes: 60_000, hours: 3_600_000 };
+export const timingUnits = { seconds: 'sekundy', minutes: 'minuty', hours: 'godziny' };
+export const defaultTiming = { edit: { value: 5, unit: 'minutes' }, delay: { min: 10, max: 30, unit: 'minutes' } };
+export const eventTiming = event => ({ edit: event?.timing?.edit ?? defaultTiming.edit, delay: event?.timing?.delay ?? defaultTiming.delay });
+export const editWindowMs = timing => timing.edit.value * unitMs[timing.edit.unit];
 const ideaDayFormatter = new Intl.DateTimeFormat('sv-SE', {
   timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit',
 });
 
-export const ideaEditHint = `Możesz zmienić lub usunąć pomysł przez ${ideaEditMinutes} minut od dodania.`;
-export const ideaEditExpired = `Minęło ${ideaEditMinutes} minut od dodania, więc tego pomysłu nie możesz już zmienić ani usunąć.`;
+const names = {
+  seconds: ['sekunda', 'sekundę', 'sekundy', 'sekund'],
+  minutes: ['minuta', 'minutę', 'minuty', 'minut'],
+  hours: ['godzina', 'godzinę', 'godziny', 'godzin'],
+};
+const plural = n => n === 1 ? 'one' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'few' : 'many';
+const duration = ({ value, unit }, accusative) => {
+  const [nominative, singular, few, many] = names[unit];
+  const form = plural(value);
+  return `${value} ${form === 'one' ? (accusative ? singular : nominative) : form === 'few' ? few : many}`;
+};
+export const ideaEditHint = timing => `Możesz zmienić lub usunąć pomysł przez ${duration(timing.edit, true)} od dodania.`;
+const hour = 3_600_000;
+export function ideaEditCountdown(left, unit) {
+  const rest = unit === 'hours' && left > hour ? `${Math.ceil(left / hour)} godz.` : left >= 60_000 ? `${Math.ceil(left / 60_000)} min` : 'mniej niż minutę';
+  return `Możesz zmienić lub usunąć pomysł jeszcze przez ${rest}`;
+}
+export const ideaEditExpired = timing => {
+  const verb = { one: 'Minęła', few: 'Minęły', many: 'Minęło' }[plural(timing.edit.value)];
+  return `${verb} ${duration(timing.edit)} od dodania, więc tego pomysłu nie możesz już zmienić ani usunąć.`;
+};
 
 const preciseIdeaTime = createdAt => createdAt?.[10] === 'T' ? Date.parse(createdAt) : NaN;
-export const ideaEditDeadline = createdAt => preciseIdeaTime(createdAt) + ideaEditWindow;
+export const ideaEditDeadline = (item, timing) => item.editClosed ? NaN : preciseIdeaTime(item.createdAt) + editWindowMs(timing);
 export function ideaCreationDay(createdAt) {
   const instant = preciseIdeaTime(createdAt);
   return Number.isFinite(instant) ? ideaDayFormatter.format(instant) : createdAt?.slice(0, 10);
 }
 
+const delayOff = timing => timing.delay.max === 0;
+export function newHold(timing, now, edit = false, random = Math.random) {
+  if (delayOff(timing)) return undefined;
+  return { at: new Date(now).toISOString(), share: random(), ...(edit ? { edit: true } : {}) };
+}
+export function arrival(hold, timing) {
+  if (!hold) return -Infinity;
+  const start = Date.parse(hold.at);
+  if (delayOff(timing)) return start;
+  const { min, max, unit } = timing.delay;
+  return start + (hold.edit ? editWindowMs(timing) : 0) + (min + hold.share * (max - min)) * unitMs[unit];
+}
+export const arrived = (hold, timing, now = Date.now()) => arrival(hold, timing) <= now;
+
+const timingLimit = 999;
+export function parseTiming(body, fail) {
+  const number = field => {
+    const raw = typeof body[field] === 'string' ? body[field].trim() : '';
+    if (!/^\d{1,3}$/.test(raw)) fail(`Wpisz liczbę od 0 do ${timingLimit}.`, field);
+    return Number(raw);
+  };
+  const unit = field => {
+    if (typeof body[field] !== 'string' || !Object.hasOwn(timingUnits, body[field])) fail('Wybierz jednostkę z listy.', field);
+    return body[field];
+  };
+  const edit = { value: number('editValue'), unit: unit('editUnit') };
+  const delay = { min: number('delayMin'), max: number('delayMax'), unit: unit('delayUnit') };
+  if (delay.min > delay.max) fail('Wartość „od” nie może być większa niż „do”.', 'delayMin');
+  return { edit, delay };
+}
+export function settleHolds(people, before, now) {
+  const settle = entry => {
+    if (entry.hold && arrived(entry.hold, before, now)) delete entry.hold;
+    if (entry.decisionHold && arrived(entry.decisionHold, before, now)) delete entry.decisionHold;
+  };
+  for (const person of people) {
+    for (const item of person.items) {
+      if (!item.editClosed && !(ideaEditDeadline(item, before) > now)) item.editClosed = true;
+      settle(item);
+      for (const thread of item.threads ?? []) {
+        settle(thread);
+        thread.answers?.forEach(settle);
+      }
+    }
+    person.suggestions?.forEach(settle);
+  }
+}
+
 export function watchIdeaEditWindows(root) {
-  const timers = Array.from(root.querySelectorAll('[data-idea-edit-remaining]'), card => {
-    const expire = () => {
+  const timers = new Set();
+  const later = (run, ms) => {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      run();
+    }, ms);
+    timers.add(timer);
+  };
+  for (const card of root.querySelectorAll('[data-idea-edit-remaining]')) {
+    const deadline = Date.now() + Number(card.dataset.ideaEditRemaining);
+    later(() => {
       for (const el of card.querySelectorAll('[data-idea-edit-open]')) el.hidden = true;
       for (const el of card.querySelectorAll('[data-idea-edit-locked]')) el.hidden = false;
+    }, deadline - Date.now());
+    const hint = card.querySelector('[data-idea-edit-countdown]');
+    if (!hint) continue;
+    const { ideaEditCountdown: unit } = hint.dataset;
+    const tick = () => {
+      const left = deadline - Date.now();
+      if (left <= 0) return;
+      hint.querySelector('[data-idea-edit-left]').textContent = ideaEditCountdown(left, unit);
+      if (left < 60_000) return;
+      const step = unit === 'hours' && left > hour ? hour : 60_000;
+      later(tick, (left - 1) % step + 1);
     };
-    return setTimeout(expire, Number(card.dataset.ideaEditRemaining));
-  });
+    tick();
+  }
   return () => timers.forEach(clearTimeout);
 }
 
@@ -589,16 +679,22 @@ const idea = fields => ({
   title: text(fields.title, 140), description: value(fields.description, 1500),
   price: value(fields.price, 100), link: link(fields.link),
 });
-const unreadList = person => [
-  ...person.items.flatMap(item => item.threads),
-  ...(person.state === 'open' ? person.suggestions.filter(s => s.status === 'pending') : []),
-].filter(entry => entry.unreadByOwner);
-const unreadGiver = person => person ? [
-  ...person.items.flatMap(item => item.threads
-    .filter(thread => thread.kind === 'question')
-    .flatMap(thread => thread.answers.filter(answer => answer.unreadByGiver))),
-  ...person.suggestions.filter(suggestion => suggestion.unreadByGiver),
-] : [];
+const unread = (entries, flag) => entries.filter(entry => entry[flag]);
+const reached = (state, hold, now) => arrived(hold, eventTiming(state), now);
+export const giverItems = (state, person, now = Date.now()) => person.items.filter(item => reached(state, item.hold, now));
+export const giverAnswers = (state, thread, now = Date.now()) => thread.answers.filter(answer => reached(state, answer.hold, now));
+export const giverDecided = (state, suggestion, now = Date.now()) => suggestion.status !== 'pending' && reached(state, suggestion.decisionHold, now);
+export const ownerThreads = (state, item, now = Date.now()) => item.threads.filter(thread => reached(state, thread.hold, now));
+export const ownerPending = (state, person, now = Date.now()) => person.suggestions.filter(s => s.status === 'pending' && reached(state, s.hold, now));
+const unreadList = (state, person, now) => unread([
+  ...person.items.flatMap(item => ownerThreads(state, item, now)),
+  ...(person.state === 'open' ? ownerPending(state, person, now) : []),
+], 'unreadByOwner');
+const unreadGiver = (state, person, now) => person ? unread([
+  ...giverItems(state, person, now),
+  ...giverItems(state, person, now).flatMap(item => item.threads.filter(thread => thread.kind === 'question').flatMap(thread => giverAnswers(state, thread, now))),
+  ...person.suggestions.filter(suggestion => giverDecided(state, suggestion, now)),
+], 'unreadByGiver') : [];
 export function unreadFood(food, person) {
   if (!food?.enabled) return [];
   return food.feed.flatMap(entry => [entry, ...entry.replies])
@@ -612,7 +708,12 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
   const recipient = next.people.find(person => person.id === me.recipient);
   const day = warsawDate.format(now);
   const ownItem = () => me.items.find(item => item.id === fields.item);
-  const newIdea = input => ({ ...idea(input), id, createdAt: now.toISOString(), threads: [] });
+  const timing = eventTiming(next);
+  const hold = (edit = false) => {
+    const value = newHold(timing, now.getTime(), edit);
+    return value ? { hold: value } : {};
+  };
+  const newIdea = (input, held = hold(true)) => ({ ...idea(input), id, createdAt: now.toISOString(), threads: [], ...held });
   switch (action) {
     case 'visit':
       me.practicePinSet = true;
@@ -632,13 +733,13 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
     }
     case 'add':
       check(me.state === 'open');
-      me.items.push(newIdea(fields));
+      me.items.push({ ...newIdea(fields), ...(next.people.some(giver => giver.recipient === me.id && giver.revealed) ? { unreadByGiver: true } : {}) });
       break;
     case 'edit':
     case 'delete': {
       const item = ownItem();
       check(me.state === 'open' && item);
-      check(ideaEditDeadline(item.createdAt) > now.getTime(), ideaEditExpired);
+      check(ideaEditDeadline(item, timing) > now.getTime(), ideaEditExpired(timing));
       if (action === 'edit') Object.assign(item, idea(fields));
       else me.items = me.items.filter(entry => entry !== item);
       break;
@@ -652,9 +753,9 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       break;
     }
     case 'question': {
-      const item = recipient?.items.find(item => item.id === fields.item);
+      const item = recipient && giverItems(next, recipient, now.getTime()).find(item => item.id === fields.item);
       check(item && recipient.state === 'open' && !item.strikeComment);
-      item.threads.push({ id, kind: 'question', question: text(fields.text, 700), createdAt: day, answers: [], unreadByOwner: true });
+      item.threads.push({ id, kind: 'question', question: text(fields.text, 700), createdAt: day, answers: [], unreadByOwner: true, ...hold() });
       break;
     }
     case 'reply': {
@@ -662,16 +763,16 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       check(item && me.state === 'open' && !item.strikeComment);
       const entry = { answer: value(fields.text, 1200), link: link(fields.link), createdAt: day };
       check(entry.answer || entry.link, 'Dodaj odpowiedź lub link.');
-      const thread = item.threads.find(thread => thread.id === fields.thread && thread.kind === 'question');
+      const thread = ownerThreads(next, item, now.getTime()).find(thread => thread.id === fields.thread && thread.kind === 'question');
       check(thread);
-      thread.answers.push({ ...entry, id, unreadByGiver: true });
+      thread.answers.push({ ...entry, id, unreadByGiver: true, ...hold() });
       break;
     }
     case 'read':
-      for (const entry of unreadList(me)) delete entry.unreadByOwner;
+      for (const entry of unreadList(next, me, now.getTime())) delete entry.unreadByOwner;
       break;
     case 'read-giver':
-      for (const entry of unreadGiver(recipient)) delete entry.unreadByGiver;
+      for (const entry of unreadGiver(next, recipient, now.getTime())) delete entry.unreadByGiver;
       break;
     case 'read-food':
       check(next.food?.enabled);
@@ -679,16 +780,18 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
       break;
     case 'suggest':
       check(maySuggest(recipient));
-      recipient.suggestions.push({ ...newIdea(fields), createdAt: day, status: 'pending', unreadByOwner: true });
+      recipient.suggestions.push({ ...newIdea(fields), createdAt: day, status: 'pending', unreadByOwner: true, ...hold() });
       break;
     case 'decide': {
-      const suggestion = me.suggestions.find(suggestion => suggestion.id === fields.suggestion);
+      const suggestion = ownerPending(next, me, now.getTime()).find(suggestion => suggestion.id === fields.suggestion);
       check(me.state === 'open' && suggestion?.status === 'pending' && ['accepted', 'rejected'].includes(fields.decision));
       suggestion.status = fields.decision;
       suggestion.unreadByGiver = true;
       suggestion.comment = value(fields.comment, 500);
       if (suggestion.comment) suggestion.commentCreatedAt = day;
-      if (fields.decision === 'accepted') me.items.push(newIdea(suggestion));
+      const decided = hold(fields.decision === 'accepted');
+      if (decided.hold) suggestion.decisionHold = decided.hold;
+      if (fields.decision === 'accepted') me.items.push(newIdea(suggestion, decided));
       break;
     }
     case 'mode':
@@ -741,6 +844,14 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
     const snapshot = metricsSnapshot(next, now);
     (next.snapshots ??= {})[snapshot.date] = snapshot;
   }
+  return next;
+}
+
+export function previewTiming(state, fields, now) {
+  const next = structuredClone(state);
+  const timing = parseTiming(fields, (message, field) => check(false, message, field));
+  settleHolds(next.people, eventTiming(next), now);
+  next.timing = timing;
   return next;
 }
 
@@ -852,6 +963,33 @@ function startPreview(data) {
     window.addEventListener('pageshow', event => { if (event.persisted) renderMetrics(); });
     return;
   }
+  if (data.view === 'timing') {
+    const section = main.querySelector('#timing');
+    const save = section.querySelector('[data-preview-timing]');
+    const field = name => section.querySelector(`[name="${name}"]`);
+    try {
+      const { edit, delay } = eventTiming(storage().read());
+      Object.entries({ editValue: edit.value, editUnit: edit.unit, delayMin: delay.min, delayMax: delay.max, delayUnit: delay.unit })
+        .forEach(([name, value]) => { field(name).value = String(value); });
+    } catch {
+      banner.append(' Nie można odczytać próbnych zmian.');
+    }
+    save.addEventListener('click', () => {
+      section.querySelector('[data-preview-timing-result]')?.remove();
+      const fields = Object.fromEntries(['editValue', 'editUnit', 'delayMin', 'delayMax', 'delayUnit'].map(name => [name, field(name).value]));
+      let result;
+      try {
+        const local = storage();
+        local.write(previewTiming(local.read(), fields, Date.now()));
+        result = status('Zapisano czas na zmiany i opóźnienie w tej przeglądarce.');
+      } catch (error) {
+        result = status(error.message);
+      }
+      result.dataset.previewTimingResult = '';
+      save.after(result);
+    });
+    return;
+  }
   if (data.practiceAction) {
     document.querySelector('[data-preview-practice-action]')?.addEventListener('click', () => {
       try {
@@ -878,8 +1016,9 @@ function startPreview(data) {
   }
   const me = () => state.people.find(person => person.id === data.actor);
   const recipient = () => state.people.find(person => person.id === me().recipient);
-  const pending = person => person.suggestions.filter(s => s.status === 'pending');
+  const pending = person => ownerPending(state, person);
   const rejected = person => person.suggestions.filter(s => s.status === 'rejected');
+  const timing = () => eventTiming(state);
   const mark = (el, id, after) => {
     if (openActivity.has(id)) {
       el.classList.add('new-activity');
@@ -1006,7 +1145,7 @@ function startPreview(data) {
       suggestion ? 'suggestions' : id => 'item-' + (edit ? item.id : id),
       suggestion ? 'Zapytamy anonimowo, czy tej osobie podoba się Twój pomysł.' :
         node('div', '', node('p', 'lead', 'Osoba, która daje Ci prezent, zobaczy ten pomysł.'),
-          !edit && node('p', 'mt-sm', ideaEditHint)), null,
+          !edit && node('p', 'mt-sm', ideaEditHint(timing()))), null,
       suggestion ? result => {
         const href = data.recipientList;
         if (!href) return;
@@ -1041,33 +1180,41 @@ function startPreview(data) {
     const struck = Boolean(item.strikeComment);
     const discussionOpen = writable && !struck;
     const ownActions = owner && writable;
-    const remaining = ownActions ? ideaEditDeadline(item.createdAt) - Date.now() : 0;
+    const remaining = ownActions ? ideaEditDeadline(item, timing()) - Date.now() : 0;
     const editable = remaining > 0;
     const editState = (element, isOpen) => {
       element.setAttribute(isOpen ? 'data-idea-edit-open' : 'data-idea-edit-locked', '');
       element.hidden = isOpen !== editable;
       return element;
     };
-    const editHint = text => {
+    const editHint = (text, countdown) => {
       const icon = node('span', '', 'i');
       icon.setAttribute('aria-hidden', 'true');
-      const hint = node('p', 'idea-edit-hint', icon, node('span', '', text));
+      let content = node('span', '', text);
+      if (countdown) {
+        content.dataset.ideaEditLeft = '';
+        const sizer = node('span', 'idea-edit-sizer', ideaEditCountdown(0, countdown));
+        sizer.setAttribute('aria-hidden', 'true');
+        content = node('span', 'idea-edit-left', content, sizer);
+      }
+      const hint = node('p', 'idea-edit-hint', icon, content);
       hint.setAttribute('role', 'note');
+      if (countdown) hint.dataset.ideaEditCountdown = countdown;
       return hint;
     };
     const lockedButton = (label, style) => {
       const control = node('button', 'btn ' + style, label);
       control.type = 'button';
       control.disabled = true;
-      control.title = ideaEditExpired;
+      control.title = ideaEditExpired(timing());
       return control;
     };
     const controls = ownActions ? [
       editable && editState(node('div', 'gift-actions', button('Edytuj', () => ideaForm('edit', item)),
         button('Usuń', () => openForm('Usunąć ten pomysł?', [], 'Tak, usuń', 'delete', { item: item.id }, 'Usunięto pomysł z listy.', 'list-result', item.title), 'danger-outline'),
-        editHint(ideaEditHint)), true),
+        editHint(ideaEditCountdown(remaining, timing().edit.unit), timing().edit.unit)), true),
       editState(node('div', 'gift-actions', lockedButton('Edytuj', ''), lockedButton('Usuń', 'danger-outline'),
-        editHint(ideaEditExpired)), false),
+        editHint(ideaEditExpired(timing()))), false),
       !struck && node('div', 'gift-actions', button('Skreśl pomysł', event => openForm('Skreśl pomysł',
         [field('comment', 'Krótki komentarz', { max: 500, multiline: true, required: true })], 'Skreśl pomysł',
         'strike', { item: item.id }, 'Skreślono pomysł.', 'item-' + item.id,
@@ -1075,18 +1222,19 @@ function startPreview(data) {
         null, null, event.currentTarget))),
     ] : !owner && discussionOpen ? [node('div', 'gift-actions', button('Dopytaj anonimowo', () => discuss('question', item)))] : [];
     const closedComments = struck && node('div', 'gift-actions', node('p', 'discussion-closed', 'Pomysł nieaktualny, komentarze zamknięte'));
-    const discussion = item.threads.map(thread => {
+    const discussion = (owner ? ownerThreads(state, item) : item.threads).map(thread => {
       const closed = struck ? ' closed-comment' : '';
       if (thread.kind === 'note') return node('div', 'item-note' + closed, node('strong', '', 'Komentarz'),
         node('p', 'multiline', thread.answer), ref(thread.link), date(thread.createdAt));
+      const answers = owner ? thread.answers : giverAnswers(state, thread);
       const question = node('div', 'question' + closed, node('strong', '', owner ? 'Anonimowe pytanie:' : 'Twoje anonimowe pytanie:'),
         node('p', 'multiline', thread.question), date(thread.createdAt),
-        ...thread.answers.map(answer => {
+        ...answers.map(answer => {
           const reply = node('div', 'answer', node('strong', '', 'Odpowiedź:'),
             node('p', 'multiline', answer.answer), ref(answer.link), date(answer.createdAt));
           return owner ? reply : mark(reply, answer.id, reply.firstElementChild);
         }),
-        thread.answers.length ? null : node('p', 'question-status', 'Brak odpowiedzi'),
+        answers.length ? null : node('p', 'question-status', 'Brak odpowiedzi'),
         owner && discussionOpen ? node('div', 'mt-sm', button(thread.answers.length ? 'Dopisz odpowiedź' : 'Odpowiedz',
           () => discuss('reply', item, thread))) : null);
       return owner ? mark(question, thread.id, question.firstElementChild) : question;
@@ -1095,12 +1243,14 @@ function startPreview(data) {
     const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), strikeNote, ...discussion), ...controls, closedComments);
     if (editable) card.dataset.ideaEditRemaining = remaining;
     card.id = 'item-' + item.id;
-    return card;
+    return owner ? card : mark(card, item.id);
   }
-  const cards = (person, owner, empty) => node('div', 'stack mt-sm',
-    ...(person.items.length ? person.items.map(item => gift(item, owner, person)) : [node('div', 'empty', empty)]));
+  const cards = (person, owner, empty) => {
+    const items = owner ? person.items : giverItems(state, person);
+    return node('div', 'stack mt-sm', ...(items.length ? items.map(item => gift(item, owner, person)) : [node('div', 'empty', empty)]));
+  };
   function suggestions(person, owner) {
-    const entries = owner ? pending(person) : person.suggestions;
+    const entries = owner ? pending(person) : person.suggestions.map(s => giverDecided(state, s) ? s : { ...s, status: 'pending', comment: '' });
     const rejectedEntries = owner ? rejected(person) : [];
     const section = node('section', 'section-gap', node('h2', '', owner ? 'Propozycje od osoby, która daje Ci prezent' : 'Twoje propozycje'));
     section.id = owner ? 'received-suggestions' : 'suggestions';
@@ -1354,13 +1504,13 @@ function startPreview(data) {
       watchFoodFilter(screen);
     }
     announcement.textContent = '';
-    badge('list', unreadList(me()).length);
-    badge('recipient', unreadGiver(recipient()).length);
+    badge('list', unreadList(state, me()).length);
+    badge('recipient', unreadGiver(state, recipient()).length);
     badge('food', unreadFood(state.food, me()).length);
   }
   function openUnread() {
-    const [entries, action] = data.view === 'list' ? [unreadList(me()), 'read'] :
-      data.view === 'recipient' ? [unreadGiver(recipient()), 'read-giver'] :
+    const [entries, action] = data.view === 'list' ? [unreadList(state, me()), 'read'] :
+      data.view === 'recipient' ? [unreadGiver(state, recipient()), 'read-giver'] :
         data.view === 'food' ? [unreadFood(state.food, me()), 'read-food'] : [[], null];
     openActivity = new Set(entries.map(entry => entry.id));
     if (openActivity.size) {

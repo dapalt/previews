@@ -135,8 +135,13 @@ svg{vertical-align:middle;flex-shrink:0}
 .gift-actions .btn{flex:1 1 auto;width:auto;min-height:48px;padding:9px 12px;font-size:1.0625rem}
 .gift-actions .btn.quiet{flex:0 1 auto}
 .idea-edit-hint{display:flex;gap:.4em;flex:0 0 100%;min-width:0;color:var(--muted);font-size:0.9375rem}
-.idea-edit-hint [aria-hidden]{display:grid;place-items:center;flex:none;width:1.2em;height:1.2em;margin-top:.3em;border:1px solid;border-radius:50%;font-size:.8em;font-weight:700;line-height:1}
+.idea-edit-left{display:grid}
+.idea-edit-left>*{grid-area:1/1}
+.idea-edit-sizer{visibility:hidden}
+.idea-edit-hint>[aria-hidden]{display:grid;place-items:center;flex:none;width:1.2em;height:1.2em;margin-top:.3em;border:1px solid;border-radius:50%;font-size:.8em;font-weight:700;line-height:1}
 .form{display:grid;grid-template-columns:minmax(0,1fr);gap:23px;margin-top:25px}
+.timing-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:end}
+.timing-range{grid-template-columns:repeat(2,minmax(0,0.8fr)) minmax(0,1.4fr)}
 label,legend{display:block;max-width:100%;overflow-wrap:anywhere;font-size:1.0625rem;font-weight:650;margin-bottom:8px}
 .optional{font-size:0.9375rem;font-weight:400;color:var(--muted)}
 input:not([type=hidden],[type=radio],[type=checkbox]),textarea,select{display:block;width:100%;min-width:0;min-height:55px;padding:13px 14px;border:1px solid var(--control-line);border-radius:11px;background:var(--field);color:var(--ink);font-size:1.125rem}
@@ -252,7 +257,7 @@ textarea:focus{min-height:min(var(--textarea-min-height,120px),var(--editing-hei
 .question.new-activity,.answer.new-activity{padding:12px}
 .new-label{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--new-ink);color:var(--new-bg);font-size:0.9375rem;font-weight:700}
 .question .new-label,.answer .new-label{margin-inline-start:8px}
-.suggestion-box .new-label{margin-bottom:8px}
+.suggestion-box .new-label,.gift-card>.new-label{margin-bottom:8px}
 .response-comment{padding:12px 14px;background:var(--pale);border-radius:9px;white-space:pre-line;margin-top:16px;overflow-wrap:anywhere}
 .event-card{border:1px solid var(--line);border-radius:13px;padding:20px}
 .event-card p{margin:8px 0 17px}
