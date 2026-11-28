@@ -891,6 +891,13 @@ function startPreview(data) {
       element.hidden = isOpen !== editable;
       return element;
     };
+    const editHint = text => {
+      const icon = node('span', '', 'i');
+      icon.setAttribute('aria-hidden', 'true');
+      const hint = node('p', 'idea-edit-hint', icon, node('span', '', text));
+      hint.setAttribute('role', 'note');
+      return hint;
+    };
     const lockedButton = (label, style) => {
       const control = node('button', 'btn ' + style, label);
       control.type = 'button';
@@ -900,8 +907,10 @@ function startPreview(data) {
     };
     const controls = ownActions ? [
       editable && editState(node('div', 'gift-actions', button('Edytuj', () => ideaForm('edit', item)),
-        button('Usuń', () => openForm('Usunąć ten pomysł?', [], 'Tak, usuń', 'delete', { item: item.id }, 'Usunięto pomysł z listy.', 'list-result', item.title), 'danger-outline')), true),
-      editState(node('div', 'gift-actions', lockedButton('Edytuj', ''), lockedButton('Usuń', 'danger-outline')), false),
+        button('Usuń', () => openForm('Usunąć ten pomysł?', [], 'Tak, usuń', 'delete', { item: item.id }, 'Usunięto pomysł z listy.', 'list-result', item.title), 'danger-outline'),
+        editHint(ideaEditHint)), true),
+      editState(node('div', 'gift-actions', lockedButton('Edytuj', ''), lockedButton('Usuń', 'danger-outline'),
+        editHint(ideaEditExpired)), false),
     ] : !owner && writable ? [node('div', 'gift-actions', button('Zapytaj anonimowo', () => discuss('question', item)))] : [];
     const discussion = item.threads.map(thread => {
       if (thread.kind === 'note') return node('div', 'item-note', node('strong', '', 'Komentarz'),
@@ -918,9 +927,7 @@ function startPreview(data) {
           () => discuss('reply', item, thread))) : null);
       return owner ? mark(question, thread.id, question.firstElementChild) : question;
     });
-    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), ...discussion,
-      editable && editState(node('p', 'mt-sm', ideaEditHint), true),
-      ownActions && editState(node('p', 'mt-sm', ideaEditExpired), false)), ...controls);
+    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), ...discussion), ...controls);
     if (editable) card.dataset.ideaEditRemaining = remaining;
     card.id = 'item-' + item.id;
     return card;

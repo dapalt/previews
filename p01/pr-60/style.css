@@ -39,7 +39,7 @@ html[data-keyboard-open] .app{min-height:0}
 .home-screen-identity{display:grid;grid-template-columns:64px minmax(0,1fr);align-items:center;gap:14px}
 .home-screen-identity img{border-radius:14px}
 .home-screen-identity strong{display:block;font-size:1.25rem;line-height:1.35;overflow-wrap:anywhere}
-.home-screen-identity p{margin-top:4px}
+.home-screen-instructions{grid-column:1/-1}
 .home-screen-entry{margin-bottom:20px}
 .lead{font-size:1.1875rem;color:var(--muted);margin-top:16px}
 .small{font-size:1.0625rem;color:var(--muted);line-height:1.5}
@@ -125,6 +125,8 @@ html[data-keyboard-open] .app{min-height:0}
 .gift-actions{display:flex;flex-wrap:wrap;gap:8px;border-top:1px solid var(--line);padding:12px 20px;background:var(--bg)}
 .gift-actions .btn{flex:1 1 auto;width:auto;min-height:48px;padding:9px 12px;font-size:1.0625rem}
 .gift-actions .btn.quiet{flex:0 1 auto}
+.idea-edit-hint{display:flex;gap:.4em;flex:0 0 100%;min-width:0;color:var(--muted);font-size:0.9375rem}
+.idea-edit-hint [aria-hidden]{display:grid;place-items:center;flex:none;width:1.2em;height:1.2em;margin-top:.3em;border:1px solid;border-radius:50%;font-size:.8em;font-weight:700;line-height:1}
 .form{display:grid;grid-template-columns:minmax(0,1fr);gap:23px;margin-top:25px}
 label,legend{display:block;max-width:100%;overflow-wrap:anywhere;font-size:1.0625rem;font-weight:650;margin-bottom:8px}
 .optional{font-size:0.9375rem;font-weight:400;color:var(--muted)}
