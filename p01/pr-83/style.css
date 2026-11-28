@@ -124,6 +124,11 @@ svg{vertical-align:middle;flex-shrink:0}
 .answer p:empty,.item-note p:empty{display:none}
 .item-note{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--pale);font-size:1.0625rem}
 .item-note p{margin-top:4px}
+.closed-comment{color:var(--muted)}
+.closed-comment .answer{border-left-color:var(--line)}
+.closed-comment .item-link{color:var(--muted)}
+.item-note.closed-comment{background:var(--bg)}
+.discussion-closed{color:var(--muted);font-size:0.9375rem;margin:0}
 .gift-actions{display:flex;flex-wrap:wrap;gap:8px;border-top:1px solid var(--line);padding:12px 20px;background:var(--bg)}
 .gift-actions .btn{flex:1 1 auto;width:auto;min-height:48px;padding:9px 12px;font-size:1.0625rem}
 .gift-actions .btn.quiet{flex:0 1 auto}

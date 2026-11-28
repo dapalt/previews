@@ -630,13 +630,13 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
     }
     case 'question': {
       const item = recipient?.items.find(item => item.id === fields.item);
-      check(item && recipient.state === 'open');
+      check(item && recipient.state === 'open' && !item.strikeComment);
       item.threads.push({ id, kind: 'question', question: text(fields.text, 700), createdAt: day, answers: [], unreadByOwner: true });
       break;
     }
     case 'reply': {
       const item = ownItem();
-      check(item && me.state === 'open');
+      check(item && me.state === 'open' && !item.strikeComment);
       const entry = { answer: value(fields.text, 1200), link: link(fields.link), createdAt: day };
       check(entry.answer || entry.link, 'Dodaj odpowiedź lub link.');
       const thread = item.threads.find(thread => thread.id === fields.thread && thread.kind === 'question');
@@ -1013,6 +1013,8 @@ function startPreview(data) {
   }
   function gift(item, owner, person) {
     const writable = person.state === 'open';
+    const struck = Boolean(item.strikeComment);
+    const discussionOpen = writable && !struck;
     const ownActions = owner && writable;
     const remaining = ownActions ? ideaEditDeadline(item.createdAt) - Date.now() : 0;
     const editable = remaining > 0;
@@ -1041,16 +1043,18 @@ function startPreview(data) {
         editHint(ideaEditHint)), true),
       editState(node('div', 'gift-actions', lockedButton('Edytuj', ''), lockedButton('Usuń', 'danger-outline'),
         editHint(ideaEditExpired)), false),
-      !item.strikeComment && node('div', 'gift-actions', button('Skreśl pomysł', event => openForm('Skreśl pomysł',
+      !struck && node('div', 'gift-actions', button('Skreśl pomysł', event => openForm('Skreśl pomysł',
         [field('comment', 'Krótki komentarz', { max: 500, multiline: true, required: true })], 'Skreśl pomysł',
         'strike', { item: item.id }, 'Skreślono pomysł.', 'item-' + item.id,
         item.title + ' zostanie na liście jako skreślony. Osoba, która daje Ci prezent, zobaczy komentarz.',
         null, null, event.currentTarget))),
-    ] : !owner && writable ? [node('div', 'gift-actions', button('Dopytaj anonimowo', () => discuss('question', item)))] : [];
+    ] : !owner && discussionOpen ? [node('div', 'gift-actions', button('Dopytaj anonimowo', () => discuss('question', item)))] : [];
+    const closedComments = struck && node('div', 'gift-actions', node('p', 'discussion-closed', 'Pomysł nieaktualny, komentarze zamknięte'));
     const discussion = item.threads.map(thread => {
-      if (thread.kind === 'note') return node('div', 'item-note', node('strong', '', 'Komentarz'),
+      const closed = struck ? ' closed-comment' : '';
+      if (thread.kind === 'note') return node('div', 'item-note' + closed, node('strong', '', 'Komentarz'),
         node('p', 'multiline', thread.answer), ref(thread.link), date(thread.createdAt));
-      const question = node('div', 'question', node('strong', '', owner ? 'Anonimowe pytanie:' : 'Twoje anonimowe pytanie:'),
+      const question = node('div', 'question' + closed, node('strong', '', owner ? 'Anonimowe pytanie:' : 'Twoje anonimowe pytanie:'),
         node('p', 'multiline', thread.question), date(thread.createdAt),
         ...thread.answers.map(answer => {
           const reply = node('div', 'answer', node('strong', '', 'Odpowiedź:'),
@@ -1058,12 +1062,12 @@ function startPreview(data) {
           return owner ? reply : mark(reply, answer.id, reply.firstElementChild);
         }),
         thread.answers.length ? null : node('p', 'question-status', 'Brak odpowiedzi'),
-        owner && writable ? node('div', 'mt-sm', button(thread.answers.length ? 'Dopisz odpowiedź' : 'Odpowiedz',
+        owner && discussionOpen ? node('div', 'mt-sm', button(thread.answers.length ? 'Dopisz odpowiedź' : 'Odpowiedz',
           () => discuss('reply', item, thread))) : null);
       return owner ? mark(question, thread.id, question.firstElementChild) : question;
     });
-    const strikeNote = item.strikeComment && node('div', 'item-note', node('strong', '', 'Pomysł skreślony'), node('p', 'multiline', item.strikeComment));
-    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), strikeNote, ...discussion), ...controls);
+    const strikeNote = struck && node('div', 'item-note', node('strong', '', 'Pomysł skreślony'), node('p', 'multiline', item.strikeComment));
+    const card = node('article', 'gift-card', presentIdea(item), node('div', 'gift-details', ref(item.link), strikeNote, ...discussion), ...controls, closedComments);
     if (editable) card.dataset.ideaEditRemaining = remaining;
     card.id = 'item-' + item.id;
     return card;
@@ -1078,7 +1082,10 @@ function startPreview(data) {
       section.firstElementChild.id = 'suggestion-result';
       section.append(node('p', 'small mt-sm', 'Czy podoba Ci się ten pomysł?'));
     }
-    else if (maySuggest(person)) section.append(node('div', 'mt-sm', button('Zaproponuj pomysł', () => ideaForm('suggest'))));
+    else if (maySuggest(person)) section.append(
+      node('p', 'small mt-sm', 'Możesz anonimowo zapytać, czy Twój pomysł się podoba.'),
+      node('div', 'mt-sm', button('Zaproponuj pomysł', () => ideaForm('suggest'))),
+    );
     else if (person.state === 'open') section.append(node('div', 'notice mt-sm',
       node('h3', '', 'Ta osoba nie przyjmuje teraz propozycji.'), node('p', '', 'Oczekujące propozycje usunięto.')));
     section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
