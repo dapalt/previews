@@ -1272,7 +1272,7 @@ function startPreview(data) {
     );
     else if (person.state === 'open') section.append(node('div', 'notice mt-sm',
       node('h3', '', 'Ta osoba nie przyjmuje teraz propozycji.'), node('p', '', 'Oczekujące propozycje usunięto.')));
-    const latest = !owner && data.recipientList && person.suggestions.findLast(s => s.status === 'pending');
+    const latest = !owner && data.recipientList && maySuggest(person) && person.suggestions.findLast(s => s.status === 'pending');
     if (entries.length || !owner) section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
       const card = node('article', 'suggestion-box', presentIdea(entry), ref(entry.link));
       if (!owner) {
