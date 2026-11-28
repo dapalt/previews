@@ -575,11 +575,6 @@ const text = (field, limit) => {
   check(result, 'Uzupełnij wymagane pole.');
   return result;
 };
-const foodMessage = field => {
-  const result = value(field, 1200);
-  check(result, 'Wpisz treść. Same spacje nie wystarczą.', 'text');
-  return result;
-};
 const link = field => {
   const url = value(field, 2048);
   if (!url) return '';
@@ -720,11 +715,11 @@ export function updatePreview(state, actor, action, fields, { id, now }) {
         food.items.push({ id, title, claimedBy: null, organizerProvided: false });
         food.feed.push({ ...entry, kind: 'added', itemTitle: title });
       } else if (action === 'food-comment') {
-        food.feed.push({ ...entry, kind: 'comment', text: foodMessage(fields.text) });
+        food.feed.push({ ...entry, kind: 'comment', text: text(fields.text, 1200) });
       } else if (action === 'food-reply') {
         const parent = food.feed.find(entry => entry.id === fields.entry);
         check(parent && !parent.replyOnly);
-        parent.replies.push({ ...entry, text: foodMessage(fields.text) });
+        parent.replies.push({ ...entry, text: text(fields.text, 1200) });
       } else {
         const item = food.items.find(item => item.id === fields.item);
         const claim = action === 'food-claim';
@@ -1272,10 +1267,9 @@ function startPreview(data) {
       const error = node('p', 'error');
       error.setAttribute('role', 'alert');
       error.tabIndex = -1;
-      error.id = inputId + '-error';
       const help = textareaHelp(input, inputId + '-limit');
       const el = node('form', formClass, lbl, !srOnly && node('p', 'small muted', 'Komentarze widzą wszyscy uczestnicy.'),
-        help, error, node('div', 'composer-row', input, save));
+        help, node('div', 'composer-row', input, save), error);
       el.method = 'post';
       el.autocomplete = 'off';
       el.addEventListener('submit', event => {
@@ -1284,15 +1278,7 @@ function startPreview(data) {
           onSubmit(Object.fromEntries(new FormData(el)));
         } catch (err) {
           error.textContent = err.message;
-          if (err.field === 'text') {
-            input.setAttribute('aria-invalid', 'true');
-            input.setAttribute('aria-describedby', error.id + ' ' + help.id);
-            input.focus();
-          } else {
-            input.removeAttribute('aria-invalid');
-            input.setAttribute('aria-describedby', help.id);
-            error.focus();
-          }
+          error.focus();
         }
       });
       return el;
