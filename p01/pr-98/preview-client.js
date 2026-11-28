@@ -1006,6 +1006,16 @@ function startPreview(data) {
   const hint = main.querySelector('[data-tab-hint]');
   let oldest = false;
   let openActivity = new Set();
+  let shortcutTimer;
+  const recipientShortcut = sent => {
+    const view = node('a', 'btn secondary mt-sm', 'Zobacz, co widzi odbiorca');
+    view.href = data.recipientList + '#received-suggestion-' + sent.id;
+    const wait = arrival(sent.hold, timing()) - Date.now();
+    if (wait <= 0) return view;
+    const note = node('p', 'small mt-sm', 'Odbiorca zobaczy propozycję, gdy minie opóźnienie ustawione przez organizatora.');
+    shortcutTimer = setTimeout(() => note.replaceWith(view), wait);
+    return note;
+  };
   let currentForm;
   let state;
   try {
@@ -1146,18 +1156,7 @@ function startPreview(data) {
       suggestion ? 'Zapytamy anonimowo, czy tej osobie podoba się Twój pomysł.' :
         node('div', '', node('p', 'lead', 'Osoba, która daje Ci prezent, zobaczy ten pomysł.'),
           !edit && node('p', 'mt-sm', ideaEditHint(timing()))), null,
-      suggestion ? result => {
-        const href = data.recipientList;
-        if (!href) return;
-        const sent = recipient().suggestions.at(-1);
-        const view = node('a', 'btn secondary mt-sm', 'Zobacz, co widzi odbiorca');
-        view.href = href + '#received-suggestion-' + sent.id;
-        const wait = arrival(sent.hold, timing()) - Date.now();
-        if (wait <= 0) return result.firstElementChild.after(view);
-        const note = node('p', 'small mt-sm', 'Odbiorca zobaczy propozycję, gdy minie opóźnienie ustawione przez organizatora.');
-        result.firstElementChild.after(note);
-        setTimeout(() => note.replaceWith(view), wait);
-      } : null, returnFocus);
+      null, returnFocus);
   }
   function discuss(action, item, thread) {
     const question = action === 'question';
@@ -1273,6 +1272,7 @@ function startPreview(data) {
     );
     else if (person.state === 'open') section.append(node('div', 'notice mt-sm',
       node('h3', '', 'Ta osoba nie przyjmuje teraz propozycji.'), node('p', '', 'Oczekujące propozycje usunięto.')));
+    const latest = !owner && data.recipientList && person.suggestions.findLast(s => s.status === 'pending');
     if (entries.length || !owner) section.append(node('div', 'stack mt-sm', ...entries.map(entry => {
       const card = node('article', 'suggestion-box', presentIdea(entry), ref(entry.link));
       if (!owner) {
@@ -1280,6 +1280,7 @@ function startPreview(data) {
           person.state === 'open' ? 'Czeka na odpowiedź' : 'Odpowiedź wstrzymana — lista jest zablokowana';
         card.append(node('strong', 'suggestion-status ' + entry.status, label));
         if (entry.comment) card.append(node('p', 'response-comment multiline', entry.comment));
+        if (latest?.id === entry.id) card.append(recipientShortcut(latest));
       } else {
         card.id = 'received-suggestion-' + entry.id;
         card.tabIndex = -1;
@@ -1504,6 +1505,7 @@ function startPreview(data) {
     if (hint) hint.hidden = me().hints?.includes(hint.dataset.tabHint) ?? false;
     if (screen && view) {
       stopEditTimers?.();
+      clearTimeout(shortcutTimer);
       screen.replaceChildren(...[hint, ...view()].filter(Boolean));
       stopEditTimers = watchIdeaEditWindows(screen);
       watchFoodFilter(screen);
